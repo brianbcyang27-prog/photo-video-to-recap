@@ -1,0 +1,21 @@
+# Virtualenv - recreate with ./setup.sh
+.venv/
+
+# User media and outputs. The media folder is where the real trip photos go;
+# it is intentionally kept out of version control.
+media/
+out/
+.work/
+.cache/
+
+# Synthetic test libraries: ~800MB of generated files. Regenerate with
+#   .venv/bin/python tools/make_test_media.py
+#   .venv/bin/python tools/make_audio_library.py
+test_media/
+test_media_audio/
+
+# macOS
+.DS_Store
+
+__pycache__/
+*.pyc
