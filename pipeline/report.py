@@ -73,7 +73,21 @@ def build_report(lib: Library, items: list[Item], ctx: TripContext,
     if missing:
         a(f"- {len(missing)} files had no capture timestamp; ordered by filename")
     if lib.rejected:
-        a(f"- {len(lib.rejected)} files skipped as unusable")
+        broken = [x for x in lib.rejected
+                  if "interrupted" in x[1] or "truncated" in x[1]
+                  or "not a readable" in x[1]]
+        note = (f" (**{len(broken)} look damaged** - re-copy them from the "
+                "original device to recover them)" if broken else "")
+        a(f"- {len(lib.rejected)} files skipped as unusable{note}")
+        a("")
+        a("<details><summary>Every skipped file, and why</summary>")
+        a("")
+        a("| File | Reason |")
+        a("|---|---|")
+        for p, why in lib.rejected:
+            a(f"| `{p.name}` | {why} |")
+        a("")
+        a("</details>")
     a("")
 
     if ctx.stops and any(s.name for s in ctx.stops):

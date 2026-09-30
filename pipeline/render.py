@@ -198,7 +198,7 @@ def render_still(png: Path, out_mp4: Path, cfg: Pipeline, duration: float,
     cmd = [
         "ffmpeg", "-y", "-v", "error",
         "-loop", "1", "-framerate", str(FPS), "-i", str(png),
-        "-vf", f"{chain},format=yuv420p",
+        "-vf", f"{chain},format=yuv420p,setrange=limited",
         "-frames:v", str(frames),
         "-an",
         "-c:v", "libx264", "-crf", str(cfg.render.crf),
@@ -223,18 +223,18 @@ def _video_filter(width: int, height: int, fit: str) -> str:
     """
     if fit == "crop":
         return (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-                f"crop={width}:{height},setsar=1,fps={FPS},format=yuv420p[v]")
+                f"crop={width}:{height},setsar=1,fps={FPS},format=yuv420p,setrange=limited[v]")
     if fit == "pad":
         return (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                f"setsar=1,fps={FPS},format=yuv420p[v]")
+                f"setsar=1,fps={FPS},format=yuv420p,setrange=limited[v]")
     # blur
     return (
         f"[0:v]split=2[bgsrc][fgsrc];"
         f"[bgsrc]scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},boxblur=18:2,eq=brightness=-0.10[bg];"
         f"[fgsrc]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
-        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps={FPS},format=yuv420p[v]"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps={FPS},format=yuv420p,setrange=limited[v]"
     )
 
 
@@ -460,20 +460,28 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
     log("preparing still frames and title cards")
     frame_for: dict[int, Path] = {}
     for i, e in enumerate(entries):
-        target = still_dir / f"still_{i:05d}.jpg"
+        # PNG, not JPEG, for the intermediate. Two reasons, both learned the
+        # hard way: a JPEG has no colour-range concept, so ffmpeg decodes it
+        # as full-range and the segment comes out yuvj420p - which the concat
+        # demuxer then propagates to the whole film, but only when a photo
+        # happens to be the first segment, so it hid behind the default
+        # chronological order. And Ken Burns zooms into the intermediate, so a
+        # lossy one visibly softens the very frames that are supposed to feel
+        # crisp. Disk is cheap; .work is deleted after every run anyway.
+        target = still_dir / f"still_{i:05d}.png"
         if e.is_title:
             bg = _load_source(e, cfg, sw)
             if bg is not None:
                 bg = bg.resize((min(bg.width, 2400), min(bg.height, 2400)),
                                Image.LANCZOS) if max(bg.size) > 2400 else bg
-            title_card(e, cfg, bg, target.with_suffix(".png"))
-            frame_for[i] = target.with_suffix(".png")
+            title_card(e, cfg, bg, target)
+            frame_for[i] = target
         else:
             src = _load_source(e, cfg, sw)
             if src is None:
                 raise ToolError(f"could not load image for {e.label}")
             canvas = compose(src, sw, sh, cfg.render.fit)
-            canvas.save(target, quality=94, subsampling=1)
+            canvas.save(target)
             frame_for[i] = target
 
     # ---- segments

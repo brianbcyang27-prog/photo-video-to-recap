@@ -278,17 +278,29 @@ def exiftool_metadata(paths: list[Path]) -> dict[str, dict]:
     args += [str(p) for p in paths]
 
     proc = run(args, timeout=1800, check=False)
-    if proc.returncode != 0:
-        # Fall back to one-at-a-time on the first path to isolate the failure.
-        if len(paths) > 1:
-            return exiftool_metadata(paths[:1]) | {}
-        log(f"exiftool failed on {paths[0].name}: {proc.stderr.strip()[:160]}", level="warn")
-        return {}
+    # A non-zero exit here is normal, not exceptional: exiftool reports a
+    # problem for any single unreadable file (an interrupted copy from a
+    # phone, a half-synced iCloud download) and still emits a complete row for
+    # every file it could read. Treating the exit code as fatal and retrying
+    # with just the first path threw away the metadata for the entire library,
+    # which silently demoted every real capture time to a file modified time
+    # and lost all GPS. So parse stdout first and only give up if it is
+    # genuinely empty or unparseable.
     try:
         rows = json.loads(proc.stdout or "[]")
     except json.JSONDecodeError:
-        log("exiftool produced invalid JSON; ignoring metadata", level="warn")
+        rows = []
+    if not isinstance(rows, list) or not rows:
+        if proc.returncode != 0:
+            log(f"exiftool failed on {len(paths)} file(s): "
+                f"{proc.stderr.strip()[:160]}", level="warn")
+        else:
+            log("exiftool produced invalid JSON; ignoring metadata",
+                level="warn")
         return {}
+    if proc.returncode != 0:
+        log(f"exiftool flagged {len(paths)} file(s) but returned metadata for "
+            f"{len(rows)}; continuing with what could be read", level="warn")
 
     for row in rows:
         src = row.get("SourceFile") or row.get("FileName") or ""
