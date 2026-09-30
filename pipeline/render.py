@@ -153,10 +153,22 @@ def title_card(entry: Entry, cfg: Pipeline, bg_source: Image.Image | None,
 # =============================================================== ken burns
 
 def _zoompan_expr(motion: str, amount: float, frames: int) -> str:
-    """Build the zoompan filter string for one move."""
+    """Build the zoompan filter string for one move.
+
+    The progress term is eased, not linear. A constant-rate ramp is at full
+    speed right up to the cut, and the next shot then starts from rest, so
+    every cut carries a velocity discontinuity - it reads as drift rather than
+    as a camera move that settled. This uses Perlin's smootherstep, whose first
+    *and* second derivatives are both zero at the ends, so the shot starts and
+    finishes genuinely at rest and cuts land without a visible jolt. Following
+    the same reasoning as the CSS curve table: motion already on screen wants
+    ease-in-out; linear is for constant motion like a spinner or a marquee.
+    """
     a = max(0.01, min(0.45, amount))
     last = max(1, frames - 1)
-    p = f"(min(on,{last})/{last})"
+    t = f"(min(on,{last})/{last})"
+    # smootherstep(t) = t^3 (6t^2 - 15t + 10)
+    p = f"({t})*({t})*({t})*(({t})*(6*({t})-15)+10)"
     cx = "iw/2-(iw/zoom/2)"
     cy = "ih/2-(ih/zoom/2)"
 

@@ -48,6 +48,26 @@ def luma(a: np.ndarray) -> np.ndarray:
     return (0.299 * a[..., 0] + 0.587 * a[..., 1] + 0.114 * a[..., 2])
 
 
+def grab_small(video: Path, t: float, w: int = 320) -> np.ndarray:
+    """One downscaled greyscale frame, for measuring motion shape.
+
+    Deliberately not the full-resolution grab above. Comparing full-HD frames
+    measures H.264 noise and blurred-backdrop drift alongside the actual pan,
+    which flattens the velocity profile to within ~20% of linear. Downscaling
+    averages that away and leaves the motion, and it is far cheaper.
+    """
+    h = max(2, round(w * 9 / 16))
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video),
+         "-frames:v", "1", "-vf", f"scale={w}:{h}",
+         "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0 or len(proc.stdout) < w * h:
+        return np.zeros((h, w), np.uint8)
+    return np.frombuffer(proc.stdout[:w * h], np.uint8).reshape(h, w)
+
+
 def read_audio(video: Path) -> tuple[np.ndarray, int]:
     """Decode the whole soundtrack as mono float32 at 48kHz."""
     proc = subprocess.run(
@@ -246,6 +266,39 @@ def main() -> int:
     check(moved > 0, f"stills with motion (of {min(14, len(stills))} sampled): {moved}")
     check(smooth >= max(1, moved - 1),
           f"motion is smooth, not a hard cut: {smooth}/{moved}")
+
+    # ---- Ken Burns must ease in and out, not ramp at a constant rate.
+    # The signature of an eased move is that displacement peaks in the middle
+    # and falls away at both ends, so the shot starts and finishes at rest and
+    # the hard cut either side lands without a velocity jump. A linear ramp is
+    # flat across the whole shot, which is what makes it read as drift. This is
+    # a *symmetric* ease, so the two ends are near-equal and the test uses the
+    # weaker of the two ratios - comparing one end against the other would pass
+    # a linear ramp by accident.
+    #
+    # Calibrated against a deliberately linear build of the same library:
+    # eased shots score at least 1.42, linear shots at most 1.05.
+    eased = 0
+    tested = 0
+    for e in stills[:10]:
+        dur = e["duration"]
+        if dur < 2.0:
+            continue
+        frames = [grab_small(video, e["start"] + dur * f).astype(np.float32)
+                  for f in (0.04, 0.29, 0.54, 0.79, 0.96)]
+        if any(f.shape != frames[0].shape for f in frames):
+            continue
+        steps = [float(np.abs(frames[i + 1] - frames[i]).mean())
+                 for i in range(len(frames) - 1)]
+        if max(steps) < 0.15:      # fully static shot: no profile to judge
+            continue
+        tested += 1
+        first, mid, last = steps[0], max(steps[1:3]), steps[-1]
+        if min(mid / max(first, 1e-6), mid / max(last, 1e-6)) > 1.25:
+            eased += 1
+    check(tested == 0 or eased >= max(1, tested - 2),
+          f"stills ease in and out instead of ramping linearly: "
+          f"{eased}/{tested}")
 
     # ---- no accidental black bars (blur-fill should fill the frame)
     bar_hits = 0
