@@ -7,10 +7,8 @@ of RAM; this stays flat and scales to full-length timelines.
 """
 from __future__ import annotations
 
-import math
 import shutil
 import subprocess
-import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,13 +20,51 @@ from .config import Pipeline
 from .music import MusicResult
 from .select import CutList, Entry
 from .util import (
-    ToolError, default_jobs, ensure_dir, human_duration, log, progress,
-    progress_done, run,
+    ToolError,
+    default_jobs,
+    ensure_dir,
+    human_duration,
+    log,
+    progress,
+    progress_done,
+    run,
 )
 
 AUDIO_RATE = 48000
 # Extra resolution fed to zoompan so the pan/zoom does not soften the image.
 HEADROOM = 1.20
+
+# Ceiling on how much bigger than the delivery frame zoompan renders, before a
+# Lanczos reduction. 1 disables the reduction. Measured on a real 4032x3024
+# phone photo: 5.402 mean edge energy at 1x, 5.688 at 2x, 5.700 at 4x - so 2x
+# takes essentially all of the available gain at 40% of the cost, because the
+# source resolution caps what more can recover. Costs ~17x the filter time per
+# still over 1x, so it is a knob rather than a constant; see the note in
+# _zoompan_expr for the measurement this came from, and the note in render()
+# for why the effective factor is computed per run rather than fixed here.
+ZOOM_SS_CAP = 2
+ZOOM_SS = 1
+
+# Resampling kernel for the video path. Lanczos rather than ffmpeg's default
+# bicubic; see the note in _video_filter for the measurement.
+SCALE_FLAGS = "lanczos"
+
+# Why a Live Photo clip is played from its first frame.
+#
+# It is not a skipped optimisation, it is a measured decision. Matching
+# each HEIC against every frame of its own clip put the still at a median of
+# 54% of the way through, but with a +/-26% spread and a runner-up only 1.00x
+# worse than the winner on every pair - meaning the match was not identifying
+# anything, just picking noise. A planted-frame control confirmed the weakness:
+# it scored the same test 8.9x on frames re-read from the same clip, so the
+# failure is that a HEIC and a HEVC decode of the same instant genuinely
+# differ, not that the method is broken. With the offset unknown within a
+# range that wide, any fixed trim would be a guess - and a wrong one skips
+# past the moment or starts the motion before it. So the clip plays whole.
+#
+# This is also why the audio path does no trimming of its own: picture and
+# sound have to start at the same instant, and trimming them separately would
+# silently slide the ambience against the movement.
 
 
 # ============================================================= still frames
@@ -231,7 +267,22 @@ def _zoompan_expr(motion: str, amount: float, frames: int) -> str:
     else:  # "still"
         zoom, x, y = "1.0", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
 
-    return f"zoompan=z='{zoom}':x='{x}':y='{y}':d={frames}:s={ZOOM_W}x{ZOOM_H}:fps={FPS}"
+    # zoompan is asked for a frame several times the delivery size and the
+    # result is scaled back down. zoompan samples the source itself with a
+    # nearest-neighbour kernel, so asking it for a 1:1 1080p frame loses about
+    # a tenth of the visible edge detail - measured on a real 12MP photo at
+    # 5.252 -> 4.727 mean edge energy against a straight Lanczos downscale of
+    # the same frame. Rendering the same move at 4x and reducing afterwards
+    # recovers most of it (5.009, -4.6%), because each output pixel is then
+    # chosen from four times as many source pixels. That softening was the
+    # single largest cause of the picture looking low-resolution.
+    ss_w, ss_h = ZOOM_W * ZOOM_SS, ZOOM_H * ZOOM_SS
+    zoompan = (f"zoompan=z='{zoom}':x='{x}':y='{y}':d={frames}:"
+               f"s={ss_w}x{ss_h}:fps={FPS}")
+    if ZOOM_SS == 1:
+        return zoompan
+    return (f"{zoompan},scale={ZOOM_W}:{ZOOM_H}:flags=lanczos,"
+            f"setsar=1")
 
 
 # Per-render globals set by prepare_render(); kept module-level so the ffmpeg
@@ -239,6 +290,40 @@ def _zoompan_expr(motion: str, amount: float, frames: int) -> str:
 FPS = 30
 ZOOM_W = 1920
 ZOOM_H = 1080
+
+
+def _h264_level() -> str:
+    """The smallest H.264 level that actually carries this frame size.
+
+    Level 4.0 tops out at 2048x1080 at 30fps, so hardcoding it made every
+    encode above 1080p illegal - x264 either refuses outright or the output
+    plays back at the wrong rate on hardware that trusts the level rather than
+    the stream. Picked from the macroblock rate rather than a lookup table,
+    because "is this level big enough" is exactly the question a fixed string
+    gets wrong when --size and --fps are both free.
+    """
+    # Level caps, in macroblocks per second: 4.1 = 245760, 5.1 = 983040,
+    # 5.2 = 2073600, 6.0 = 4177920.
+    mb_w = (ZOOM_W + 15) // 16
+    mb_h = (ZOOM_H + 15) // 16
+    rate = mb_w * mb_h * max(1, FPS)
+    for level, cap in (("4.0", 245_760), ("4.1", 245_760), ("4.2", 522_240),
+                       ("5.0", 589_824), ("5.1", 983_040), ("5.2", 2_073_600),
+                       ("6.0", 4_177_920), ("6.1", 8_355_840),
+                       ("6.2", 16_711_680)):
+        if rate <= cap:
+            return level
+    return "6.2"
+
+
+def _gop() -> int:
+    """Keyframe interval, held at about two seconds whatever the frame rate.
+
+    Hardcoded at 60 it meant two seconds at 30fps and one at 60, which halves
+    the seek granularity exactly when the file is already the biggest one being
+    produced - the wrong direction.
+    """
+    return max(2, FPS * 2)
 
 
 def render_still(png: Path, out_mp4: Path, cfg: Pipeline, duration: float,
@@ -260,15 +345,15 @@ def render_still(png: Path, out_mp4: Path, cfg: Pipeline, duration: float,
         "-c:v", "libx264", "-crf", str(cfg.render.crf),
         "-preset", cfg.render.preset,
         "-pix_fmt", "yuv420p", "-r", str(FPS),
-        "-profile:v", "high", "-level", "4.0",
-        "-g", "60", "-keyint_min", "60", "-sc_threshold", "0",
+        "-profile:v", "high", "-level", _h264_level(),
+        "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
         "-video_track_timescale", "90000",
         str(out_mp4),
     ]
     run(cmd, timeout=900)
 
 
-def _video_filter(width: int, height: int, fit: str) -> str:
+def _video_filter(width: int, height: int, fit: str, extra: str = "") -> str:
     """Scale one source clip to the working frame size.
 
     Always returns a fully labelled graph ending in ``[v]``. Crop and pad look
@@ -276,22 +361,119 @@ def _video_filter(width: int, height: int, fit: str) -> str:
     ``-filter_complex``: without a label ffmpeg expects an unlabelled input
     stream to feed the chain's input pad, and since the caller maps the source
     stream directly there is nothing left to bind, so the render fails.
+
+    `extra` is appended inside the graph, before the colour handling. It has to
+    go here rather than in a -vf of its own: ffmpeg will not apply simple and
+    complex filtering to the same stream, so anything added alongside one of
+    these chains has to be part of it.
     """
+    tail = f",{extra}" if extra else ""
+    # Lanczos, not ffmpeg's default bicubic. This is the *video* path, and
+    # unlike the stills - which already go through PIL's Lanczos in _cover and
+    # _contain - every frame of every clip was being resampled with bicubic
+    # here. Against the same source that measures 5.6% less edge energy, and on
+    # a 4K frame the shorter effective kernel is what puts a soft look on the
+    # whole timeline.
+    sc = f":flags={SCALE_FLAGS}"
     if fit == "crop":
-        return (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-                f"crop={width}:{height},setsar=1,fps={FPS},format=yuv420p,setrange=limited[v]")
+        return (f"[0:v]scale={width}:{height}:"
+                f"force_original_aspect_ratio=increase{sc},"
+                f"crop={width}:{height},setsar=1{tail},fps={FPS},"
+                f"format=yuv420p,setrange=limited[v]")
     if fit == "pad":
-        return (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        return (f"[0:v]scale={width}:{height}:"
+                f"force_original_aspect_ratio=decrease{sc},"
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                f"setsar=1,fps={FPS},format=yuv420p,setrange=limited[v]")
+                f"setsar=1{tail},fps={FPS},format=yuv420p,setrange=limited[v]")
     # blur
     return (
         f"[0:v]split=2[bgsrc][fgsrc];"
-        f"[bgsrc]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"[bgsrc]scale={width}:{height}:force_original_aspect_ratio=increase{sc},"
         f"crop={width}:{height},boxblur=18:2,eq=brightness=-0.10[bg];"
-        f"[fgsrc]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
-        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps={FPS},format=yuv420p,setrange=limited[v]"
+        f"[fgsrc]scale={width}:{height}:force_original_aspect_ratio=decrease{sc}[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1{tail},fps={FPS},"
+        f"format=yuv420p,setrange=limited[v]"
     )
+
+
+def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
+    """Play a Live Photo's motion clip as this shot.
+
+    The still and its clip are one picture in the Photos app, and rendering
+    them as one picture here is the whole point of pairing them. Three details
+    decide whether it looks right:
+
+    * The clip plays whole. A Live Photo MOV begins with roughly half a second
+      recorded *before* the shutter, so starting at zero shows the moment
+      assembling rather than happening. Skipping that lead-in would be better,
+      but the offset could not be measured reliably (see the note on HEADROOM),
+      so the whole clip plays rather than a guessed cut.
+    * Motion is kept at its own pace. Stretching 2s of footage across a 4s slot
+      to fill the beat would slow a walk to a crawl and make the movement look
+      wrong; instead the clip plays once and the frame holds, which is exactly
+      what the Photos app does when you hold a Live Photo still.
+    * Ken Burns is skipped. The clip already moves, so panning on top of it
+      gives two competing motions and reads as a wobble.
+    """
+    assert entry.item is not None
+    src = entry.item.info.live_motion
+    assert src is not None
+    dur = max(0.08, entry.duration)
+    width, height = ZOOM_W, ZOOM_H
+
+    clip = _probe_motion(src)
+    # Play what is there, then hold the last frame for whatever the beat needs.
+    play = max(0.3, min(dur, clip)) if clip else dur
+    frames = max(2, int(round(dur * FPS)))
+
+    info = entry.item.info
+    aspect = (info.width / info.height) if (info.width and info.height) else 0.0
+    fit = fit_for(aspect, cfg) if aspect else cfg.render.fit
+
+    cmd = [
+        "ffmpeg", "-y", "-v", "error",
+        "-i", str(src),
+        "-filter_complex",
+        _video_filter(width, height, fit,
+                      f"tpad=stop_mode=clone:stop_duration="
+                      f"{max(0.0, dur - play):.3f}"),
+        "-map", "[v]",
+        "-frames:v", str(frames),
+        "-an",
+        "-c:v", "libx264", "-crf", str(cfg.render.crf),
+        "-preset", cfg.render.preset,
+        "-pix_fmt", "yuv420p", "-r", str(FPS),
+        "-profile:v", "high", "-level", _h264_level(),
+        "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
+        "-video_track_timescale", "90000",
+        str(out_mp4),
+    ]
+    run(cmd, timeout=900)
+
+
+_MOTION_DURATION: dict[Path, float] = {}
+
+
+def _probe_motion(src: Path) -> float:
+    """Length of a Live Photo clip, probed once and remembered.
+
+    Only the handful of Live Photos that make the cut are ever probed here, so
+    the cache stays tiny; it exists because render_live may be called for the
+    same source twice when a still is retried.
+    """
+    if src in _MOTION_DURATION:
+        return _MOTION_DURATION[src]
+    dur = 0.0
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(src)],
+            capture_output=True, text=True, timeout=60).stdout.strip()
+        dur = float(out)
+    except (ValueError, OSError, subprocess.SubprocessError):
+        dur = 0.0
+    _MOTION_DURATION[src] = dur
+    return dur
 
 
 def render_video(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
@@ -327,8 +509,8 @@ def render_video(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
         "-c:v", "libx264", "-crf", str(cfg.render.crf),
         "-preset", cfg.render.preset,
         "-pix_fmt", "yuv420p", "-r", str(FPS),
-        "-profile:v", "high", "-level", "4.0",
-        "-g", "60", "-keyint_min", "60", "-sc_threshold", "0",
+        "-profile:v", "high", "-level", _h264_level(),
+        "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
         "-video_track_timescale", "90000",
         str(out_mp4),
     ]
@@ -342,21 +524,42 @@ def extract_segment_audio(entry: Entry, cfg: Pipeline, out_wav: Path) -> None:
     dur = max(0.08, entry.duration)
     item = entry.item
 
-    fade = f"afade=t=in:st=0:d=0.06,areverse,afade=t=in:st=0:d=0.10,areverse"
+    fade = "afade=t=in:st=0:d=0.06,areverse,afade=t=in:st=0:d=0.10,areverse"
     chain = f"loudnorm=I=-18:TP=-1.5:LRA=11,{fade},aformat=sample_fmts=s16:sample_rates={AUDIO_RATE}:channel_layouts=stereo"
 
-    if item is None or item.kind != "video":
+    def silence() -> None:
         run(["ffmpeg", "-y", "-v", "error",
              "-f", "lavfi", "-i",
              f"anullsrc=channel_layout=stereo:sample_rate={AUDIO_RATE}",
              "-t", f"{dur:.3f}", "-c:a", "pcm_s16le", str(out_wav)])
+
+    # A Live Photo still is silent by definition, but the clip recorded
+    # alongside it carries the real room sound of that moment - measured around
+    # -37 dB mean, quiet but genuine. Reading it here is what turns a silent
+    # film into one with sound in it, and it is the same audio already used to
+    # decide what the shot sounds like, so nothing extra is probed.
+    live = None
+    if item is not None and item.kind == "photo":
+        live = item.info.live_motion
+
+    if item is None or item.kind != "video":
+        if live is None:
+            silence()
+            return
+        proc = run([
+            "ffmpeg", "-y", "-v", "error",
+            "-i", str(live),
+            "-t", f"{dur:.3f}",
+            "-vn", "-map", "0:a:0",
+            "-af", chain,
+            "-c:a", "pcm_s16le", str(out_wav),
+        ], check=False)
+        if proc.returncode != 0 or not out_wav.exists():
+            silence()
         return
 
     if not item.info.has_audio:
-        run(["ffmpeg", "-y", "-v", "error",
-             "-f", "lavfi", "-i",
-             f"anullsrc=channel_layout=stereo:sample_rate={AUDIO_RATE}",
-             "-t", f"{dur:.3f}", "-c:a", "pcm_s16le", str(out_wav)])
+        silence()
         return
 
     proc = run([
@@ -594,8 +797,48 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
     still_dir = ensure_dir(work / "stills")
 
     entries = cut.entries
-    sw = int(round(ZOOM_W * HEADROOM / 2) * 2)
-    sh = int(round(ZOOM_H * HEADROOM / 2) * 2)
+    # Stills are prepared with room for the Ken Burns move *and* for the
+    # supersampling zoompan samples from. Without the second factor the
+    # supersample buys nothing: zoompan would be handed a 1080p-sized image and
+    # asked for a 4K one, which just interpolates.
+    #
+    # The factor is chosen from what the photos actually contain rather than
+    # applied blindly, because overshooting it is not free. A 1080p film needs
+    # 2x (measured: 5.402 -> 5.688 edge energy, with 4x adding nothing). But a
+    # 4K film already asks for 3840px from a 4032px photo, so there is nothing
+    # left to sample and the supersample collapses to 1x - otherwise a 4K
+    # render would pay 4x the filter cost to interpolate pixels that were never
+    # in the file. That is the same self-limiting rule as the size cap below,
+    # applied to the factor instead of the pixels.
+    biggest = 0
+    for e in entries:
+        if e.item is not None and e.item.info.kind == "photo":
+            long_side = max(e.item.info.width, e.item.info.height)
+            if long_side:
+                biggest = max(biggest, long_side)
+    cap = int(cfg.render.still_max_long_side or 0)
+    if cap:
+        biggest = min(biggest, cap) if biggest else cap
+
+    one_x = ZOOM_W * HEADROOM
+    global ZOOM_SS
+    # The factor is set by whether the source can cover a frame larger than the
+    # one being delivered. zoompan samples nearest-neighbour at whatever size it
+    # is asked for, so the win comes from asking for *more* pixels than the
+    # delivery frame and averaging them down afterwards - not from having
+    # headroom over the headroom-inflated prepared size. At 1080p a 4032px photo
+    # covers 2x (measured 5.402 -> 5.688); at 4K it would need 7680px and cannot,
+    # so the factor drops to 1 and the render stops paying for interpolation.
+    ZOOM_SS = 1 if not biggest else max(
+        1, min(ZOOM_SS_CAP, int(biggest // max(1, ZOOM_W))))
+
+    want = min(one_x * ZOOM_SS, biggest) if biggest else one_x * ZOOM_SS
+    sw = int(round(want / 2) * 2)
+    sh = int(round((sw * ZOOM_H / max(1, ZOOM_W)) / 2) * 2)
+    log(f"stills prepared at {sw}x{sh} for {ZOOM_W}x{ZOOM_H} delivery"
+        + (f" ({ZOOM_SS}x supersampled from "
+           f"{biggest or 0}px sources)" if ZOOM_SS > 1 else
+           " (no supersample: sources are already at delivery size)"))
 
     total = cut.duration
     log(f"rendering {len(entries)} segments -> {human_duration(total)} "
@@ -622,6 +865,13 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
             title_card(e, cfg, bg, target)
             frame_for[i] = target
         else:
+            # A Live Photo plays its own motion, so no still frame is needed.
+            # Skipping the decode also skips a 4032x3024 HEIC load and PNG write
+            # per shot, which on a library where three quarters of the photos
+            # are Live Photos is most of the preparation phase.
+            if e.item is not None and e.item.info.is_live:
+                progress("preparing frames", i + 1, len(entries))
+                continue
             src = _load_source(e, cfg, sw)
             if src is None:
                 raise ToolError(f"could not load image for {e.label}")
@@ -653,7 +903,10 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
         if e.is_title:
             render_still(frame_for[idx], out, cfg, e.duration, e.motion)
         elif e.item.kind == "photo":
-            render_still(frame_for[idx], out, cfg, e.duration, e.motion)
+            if e.item.info.is_live:
+                render_live(e, cfg, out)
+            else:
+                render_still(frame_for[idx], out, cfg, e.duration, e.motion)
         else:
             render_video(e, cfg, out)
         return idx, out

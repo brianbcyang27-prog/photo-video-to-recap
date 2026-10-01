@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .util import log, progress, progress_done
@@ -39,6 +39,13 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 # ----------------------------------------------------------------- sunlight
 
+# J2000 is 2000-01-01 12:00:00 UTC, not midnight - the half day matters, and
+# getting it wrong puts every sunrise twelve hours out. Named because the
+# arithmetic still returns plausible-looking dates if either value is wrong.
+_J2000_JD = 2451545.0
+_J2000_UNIX = 946728000.0
+
+
 def _julian_day(ts: float) -> float:
     return ts / 86400.0 + 2440587.5
 
@@ -52,15 +59,23 @@ def sun_times(ts: float, lat: float, lon: float) -> tuple[float, float]:
     """
     try:
         jd = _julian_day(ts)
-        n = jd - 2451545.0 + 0.0008
-        lw = -lon  # NOAA uses west-positive
-        j_star = n - lw / 360.0
+        # The terms are a function of the calendar date, not the instant, so the
+        # day is snapped to its Julian Day Number first. Left unsnapped, the
+        # answer slides by the time of day it was asked: the same location and
+        # date would give different sun times depending on the hour.
+        n = math.floor(jd + 0.5) - _J2000_JD + 0.0008
+        # Solar noon arrives earlier in UTC the further east you go, so east
+        # longitude subtracts. The NOAA write-up states this in west-positive
+        # terms, and the extra negation is easy to lose: a backwards sign costs
+        # twice the longitude error, which is six hours at Kyoto - enough to
+        # score a midday shot as one taken in the dark.
+        j_star = n - lon / 360.0
         m = (357.5291 + 0.98560028 * j_star) % 360.0
         c = (1.9148 * math.sin(math.radians(m))
              + 0.0200 * math.sin(math.radians(2 * m))
              + 0.0003 * math.sin(math.radians(3 * m)))
         lam = (m + c + 180.0 + 102.9372) % 360.0
-        j_transit = (2451545.0 + j_star + 0.0053 * math.sin(math.radians(m))
+        j_transit = (_J2000_JD + j_star + 0.0053 * math.sin(math.radians(m))
                      - 0.0069 * math.sin(math.radians(2 * lam)))
         sin_dec = math.sin(math.radians(lam)) * math.sin(math.radians(23.4397))
         cos_dec = math.cos(math.asin(sin_dec))
@@ -71,12 +86,37 @@ def sun_times(ts: float, lat: float, lon: float) -> tuple[float, float]:
         if cos_omega < -1.0 or cos_omega > 1.0:
             return 0.0, 0.0
         omega = math.degrees(math.acos(cos_omega))
-        noon = (j_transit - 2451545.0) * 24.0 * 3600.0
-        rise = noon - omega * 12.0 * 360.0 / math.pi
-        set_ = noon + omega * 12.0 * 360.0 / math.pi
+        # _julian_day counts from the unix epoch, but the solar terms are
+        # anchored at J2000, which is thirty years later.
+        noon = (j_transit - _J2000_JD) * 86400.0 + _J2000_UNIX
+        # The sun sweeps 15 degrees of hour angle per hour, so omega degrees
+        # from noon is simply omega/15 hours.
+        rise = noon - omega * 240.0
+        set_ = noon + omega * 240.0
         return rise, set_
     except (ValueError, ZeroDivisionError, OverflowError):
         return 0.0, 0.0
+
+
+def _daylight_window(ts: float, lat: float, lon: float) -> tuple[float, float]:
+    """The sunrise/sunset pair for the solar day that ``ts`` actually falls in.
+
+    ``sun_times`` answers for the UTC day containing ``ts``, which is not the
+    day a photographer was living in. At 05:00 in Kyoto it is still the
+    previous afternoon in UTC, so the window it returns has already closed and
+    every shot from that morning reads as night. Checking the neighbouring days
+    too costs three evaluations of pure arithmetic and makes the answer mean
+    "was the light good *here, now*", which is the only question being asked.
+    """
+    best: tuple[float, float] = (0.0, 0.0)
+    for probe in (ts - 86400.0, ts, ts + 86400.0):
+        rise, set_ = sun_times(probe, lat, lon)
+        if rise and set_ > rise:
+            if rise <= ts <= set_:
+                return rise, set_          # exact hit, cannot do better
+            if not best[0] or (set_ - rise) > (best[1] - best[0]):
+                best = (rise, set_)
+    return best
 
 
 def light_score(ts: float, lat: float, lon: float) -> float:
@@ -85,11 +125,12 @@ def light_score(ts: float, lat: float, lon: float) -> float:
     Golden hour at the edges of the day scores best, harsh midday is penalised,
     and deep night is penalised hard (almost always unusable).
     """
-    rise, set_ = sun_times(ts, lat, lon) if lon or lat else (0.0, 0.0)
+    rise, set_ = _daylight_window(ts, lat, lon) if (lat or lon) else (0.0, 0.0)
     if not rise or not set_ or set_ <= rise:
-        # No usable solar data; fall back to a gentle time-of-day prior.
-        hour = datetime.fromtimestamp(ts, tz=timezone.utc).hour + \
-            datetime.fromtimestamp(ts, tz=timezone.utc).minute / 60.0
+        # No usable solar data (polar day, or a shot with no usable position);
+        # fall back to a gentle time-of-day prior.
+        local = datetime.fromtimestamp(ts, tz=UTC)
+        hour = local.hour + local.minute / 60.0
         if hour < 5.5 or hour > 20.5:
             return 0.25
         return 0.6
@@ -108,10 +149,14 @@ def light_score(ts: float, lat: float, lon: float) -> float:
         peak = 1500.0
         return float(max(0.6, 1.0 - abs(before_set - peak) / (2 * golden_window)))
 
-    # Daylight proper. Penalise the harsh midday window.
+    # Daylight proper. The harshest light of the day is the overhead noon sun,
+    # so the score is lowest at midday and climbs back towards the golden
+    # windows at either end. Reading this as a penalty on distance-from-midday
+    # gets it exactly backwards, and the trip's flattest, most contrasty
+    # midday shots win the ranking.
     midday_distance = abs(ts - (rise + set_) / 2.0)
     span = max(1.0, (set_ - rise) / 2.0)
-    return float(max(0.45, 1.0 - 0.45 * (midday_distance / span)))
+    return float(max(0.45, min(1.0, 0.5 + 0.2 * (midday_distance / span))))
 
 
 # --------------------------------------------------------- reverse geocoding
@@ -433,7 +478,7 @@ def build_chapters(entries: list[tuple[float, float, float]],
 def _local_day(ts: float, offsets: dict[float, int]) -> date:
     """Calendar date of a shot in the timezone it was taken in."""
     return datetime.fromtimestamp(
-        ts + offsets.get(ts, 0), tz=timezone.utc).date()
+        ts + offsets.get(ts, 0), tz=UTC).date()
 
 
 def _close_chapter(index: int,

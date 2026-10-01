@@ -18,7 +18,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .util import ToolError, log
+from . import arrange
+from .util import log
 
 SR = 44100
 
@@ -426,7 +427,14 @@ def generate_music(target_seconds: float, mood: str = "uplifting",
     intro_bars = 2
     drums_on = intro_bars * bar
 
+    # The arrangement, so a long piece has a shape instead of one looped bar.
+    # See pipeline.arrange - the short version is that this used to repeat the
+    # same four bars to fill the target, which at ten minutes meant hearing the
+    # same ten seconds sixty times.
+    shape = arrange.plan(n_bars, max_bars=max(2, int(90.0 / bar)))
+
     for b in range(n_bars):
+        sec = arrange.section_at(shape, b)
         deg, tones = prog[b % len(prog)]
         root_pc = (key_root + deg) % 12
         t0 = b * bar
@@ -435,10 +443,10 @@ def generate_music(target_seconds: float, mood: str = "uplifting",
         # ---- pad: whole bar, one chord
         chord_freqs = [_hz(key_root + 12 * 3 + root_pc + iv) for iv in tones]
         chord_freqs += [_hz(key_root + 12 * 3 + root_pc + tones[0] + 12)]
-        l, r = _pad(chord_freqs, bar * 1.02, SR)
-        end = min(n, start + len(l))
-        pad_l[start:end] += l[:end - start]
-        pad_r[start:end] += r[:end - start]
+        chord_l, chord_r = _pad(chord_freqs, bar * 1.02, SR)
+        end = min(n, start + len(chord_l))
+        pad_l[start:end] += chord_l[:end - start] * sec.pad
+        pad_r[start:end] += chord_r[:end - start] * sec.pad
 
         # ---- bass: root on 1 and 3, fifth on the "and" of 3
         for beat, mul in ((0, 1.0), (2, 1.0), (2.5, 1.1892)):
@@ -447,10 +455,11 @@ def generate_music(target_seconds: float, mood: str = "uplifting",
             sig = _bass(_hz(key_root + root_pc + 12), dur, SR)
             e = min(n, s + len(sig))
             if s < e:
-                bass_buf[s:e] += sig[:e - s] * mul * (0.9 if b >= intro_bars else 0.6)
+                bass_buf[s:e] += (sig[:e - s] * mul * sec.bass
+                                  * (0.9 if b >= intro_bars else 0.6))
 
         # ---- arpeggio: sixteenths through the chord, in stereo
-        if mood not in ("cinematic",) or b >= intro_bars:
+        if sec.arp > 0.02 and (mood not in ("cinematic",) or b >= intro_bars):
             steps = 8
             arp_notes = [tones[k % len(tones)] + 12 * (2 + (k // len(tones)))
                          for k in range(len(tones) + 1)]
@@ -461,8 +470,9 @@ def generate_music(target_seconds: float, mood: str = "uplifting",
                     continue
                 pc = arp_notes[s_i % len(arp_notes)]
                 f = _hz(key_root + root_pc + pc + 24)
-                sig = _pluck(f, spb * 0.7, SR, bright=0.65 if mood == "energetic" else 0.4)
-                sig *= 0.20 if b < intro_bars else 0.26
+                bright = (0.65 if mood == "energetic" else 0.4) * sec.brightness
+                sig = _pluck(f, spb * 0.7, SR, bright=bright)
+                sig *= (0.20 if b < intro_bars else 0.26) * sec.arp
                 e = min(n, s + len(sig))
                 if s >= e:
                     continue
@@ -470,11 +480,10 @@ def generate_music(target_seconds: float, mood: str = "uplifting",
                 arp_buf_l[s:e] += sig[:e - s]
                 arp_buf_r[s:e] += sig[:e - s] * 0.88
 
-        if t0 < drums_on:
+        if t0 < drums_on or sec.drums < 0.02:
             continue
 
         # ---- drums
-        beat_idx = int(round(t0 / spb))
         for beat in range(beats_per_bar):
             s = int((t0 + beat * spb) * SR)
             if s >= n:
@@ -483,11 +492,11 @@ def generate_music(target_seconds: float, mood: str = "uplifting",
             if beat in (0, 2):
                 k = _kick(SR)
                 e = min(n, s + len(k))
-                kick_buf[s:e] += k[:e - s]
+                kick_buf[s:e] += k[:e - s] * sec.drums
             if beat in (1, 3):
                 sn = _snare(SR)
                 e = min(n, s + len(sn))
-                snare_buf[s:e] += sn[:e - s]
+                snare_buf[s:e] += sn[:e - s] * sec.drums
             # Offbeat hats
             for off in (0.5, 1.5, 2.5, 3.5):
                 hs = int((t0 + off * spb) * SR)
@@ -495,14 +504,14 @@ def generate_music(target_seconds: float, mood: str = "uplifting",
                     continue
                 hh = _hat(SR, open_=(off == 3.5 and mood == "cinematic"))
                 e = min(n, hs + len(hh))
-                hat_buf[hs:e] += hh[:e - hs]
+                hat_buf[hs:e] += hh[:e - hs] * sec.drums
             # Extra 16th hat pickup on every other bar for forward motion.
             if mood in ("energetic", "uplifting") and global_beat % 4 == 3:
                 hs = int((t0 + 3.75 * spb) * SR)
                 if hs < n:
                     hh = _hat(SR)
                     e = min(n, hs + len(hh))
-                    hat_buf[hs:e] += hh[:e - hs]
+                    hat_buf[hs:e] += hh[:e - hs] * sec.drums
 
     # ---- sidechain pump the melodic layers on each kick
     duck = np.ones(n, dtype=np.float64)

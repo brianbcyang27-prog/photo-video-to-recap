@@ -12,7 +12,7 @@ import os
 import random
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -30,9 +30,9 @@ PLACES = [
     ("Nara", 34.6851, 135.8048),
     ("Osaka", 34.6937, 135.5023),
 ]
-DAY_STARTS = [datetime(2026, 4, 12, 9, 0, tzinfo=timezone.utc),
-              datetime(2026, 4, 13, 9, 30, tzinfo=timezone.utc),
-              datetime(2026, 4, 14, 17, 0, tzinfo=timezone.utc)]
+DAY_STARTS = [datetime(2026, 4, 12, 9, 0, tzinfo=UTC),
+              datetime(2026, 4, 13, 9, 30, tzinfo=UTC),
+              datetime(2026, 4, 14, 17, 0, tzinfo=UTC)]
 
 
 def palette(rng: random.Random) -> tuple[tuple, tuple]:
@@ -123,7 +123,7 @@ def stamp(path: Path, when: datetime, lat: float, lon: float,
         f"-CreateDate={when.strftime('%Y:%m:%d %H:%M:%S')}",
         f"-GPSLatitude={lat}", f"-GPSLatitudeRef={'N' if lat >= 0 else 'S'}",
         f"-GPSLongitude={lon}", f"-GPSLongitudeRef={'E' if lon >= 0 else 'W'}",
-        f"-Make=Apple", f"-Model={camera}",
+        "-Make=Apple", f"-Model={camera}",
         str(path),
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

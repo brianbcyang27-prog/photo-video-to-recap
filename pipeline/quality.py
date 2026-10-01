@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np

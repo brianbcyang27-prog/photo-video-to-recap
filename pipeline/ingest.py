@@ -6,17 +6,26 @@ scoring it.
 """
 from __future__ import annotations
 
-import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from .config import AUDIO_EXT, PHOTO_EXT, VIDEO_EXT, Pipeline
+from . import livephoto
+from .config import AUDIO_EXT, PHOTO_EXT, VIDEO_EXT
 from .util import (
-    MediaInfo, PipelineError, ToolError, default_jobs, exiftool_metadata, log,
-    parse_exif_datetime, parse_utc_offset, progress, progress_done,
-    _gps, probe,
+    MediaInfo,
+    PipelineError,
+    ToolError,
+    _gps,
+    default_jobs,
+    exiftool_metadata,
+    log,
+    parse_exif_datetime,
+    parse_utc_offset,
+    probe,
+    progress,
+    progress_done,
 )
 
 # Files that are almost never useful in a recap.
@@ -101,8 +110,14 @@ def _probe_reason(path: Path, exc: Exception) -> str:
     return f"could not be read ({str(exc)[:80]})"
 
 
-def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
-    """Build a Library from a folder of mixed media."""
+def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None,
+         live_photos: bool = True) -> Library:
+    """Build a Library from a folder of mixed media.
+
+    `live_photos` off leaves each still and its motion clip as two unrelated
+    files, which is what this did before pairing existed - useful for
+    comparing, and wrong for a finished film.
+    """
     if not root.exists():
         raise PipelineError(
             f"media folder not found: {root}\n"
@@ -224,6 +239,9 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
 
     lib.audio = [p for p in audio_paths if p.stat().st_size > 1024]
 
+    if live_photos:
+        _attach_live_photos(lib)
+
     if not lib.items:
         reasons = "; ".join(f"{p.name}: {why}" for p, why in lib.rejected[:5])
         raise PipelineError(
@@ -236,6 +254,30 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
     _borrow_offsets(lib)
     _report_skips(lib)
     return lib
+
+
+def _attach_live_photos(lib: Library) -> None:
+    """Fold each Live Photo's motion clip into the still it belongs to.
+
+    Called after the pools are built and before anything downstream sees them,
+    so the two halves of one moment are a single asset from here on. The clips
+    that turn out to be Live Photo halves leave the video pool entirely: they
+    are not footage competing for screen time, and leaving them in would let the
+    same instant be queued twice.
+    """
+    if not lib.photos or not lib.videos:
+        return
+    motion, consumed = livephoto.pair_library(lib.photos, lib.videos)
+    if not motion:
+        return
+    for photo in lib.photos:
+        clip = motion.get(photo.path)
+        if clip is not None:
+            photo.live_motion = clip
+    # Re-sort: removing entries from a list that was sorted by capture time is
+    # safe, but keeping the invariant explicit here means the caller never has
+    # to remember which pool entries came out of a pairing pass.
+    lib.videos = [v for v in lib.videos if v.path not in consumed]
 
 
 def _true_photo_size(info: MediaInfo, row: dict) -> None:
@@ -386,14 +428,14 @@ def capture_span(lib: Library) -> tuple[float, float, int]:
     stamps = [i.captured for i in lib.items if i.captured]
     if not stamps:
         return 0.0, 0.0, 0
-    from datetime import datetime, timezone
+    from datetime import datetime
     days = {
-        datetime.fromtimestamp(t, tz=timezone.utc).date()
+        datetime.fromtimestamp(t, tz=UTC).date()
         for t in stamps
     }
     return min(stamps), max(stamps), len(days)
 
 
 def day_index(stamp: float) -> str:
-    from datetime import datetime, timezone
-    return datetime.fromtimestamp(stamp, tz=timezone.utc).strftime("%Y-%m-%d")
+    from datetime import datetime
+    return datetime.fromtimestamp(stamp, tz=UTC).strftime("%Y-%m-%d")

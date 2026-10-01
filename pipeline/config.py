@@ -5,7 +5,7 @@ produce a watchable travel recap with no arguments at all.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 # ---------------------------------------------------------------- media types
@@ -16,6 +16,28 @@ PHOTO_EXT = {
 }
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".insv", ".mts", ".m2ts", ".webm", ".3gp"}
 AUDIO_EXT = {".mp3", ".m4a", ".wav", ".aac", ".flac", ".aiff", ".aif", ".ogg"}
+
+
+# Named output sizes, so "4K" means one thing everywhere instead of four
+# separate width/height pairs drifting apart.
+#
+# 4K is worth having for *stills* and not for *video*. A phone photo is
+# 4032x3024, so 3840x2160 is a genuine downscale with real detail in it. A
+# phone video is 1920x1440 at most, so the same 4K frame is a 2.7x upscale:
+# measured near-Nyquist energy rises 10%, which is interpolation rather than
+# resolution. It is not worse, but it is not better either, and it costs
+# bitrate on pixels carrying no information. So 4K is a choice rather than a
+# default, and 1080p60 is the better deal when the library is mostly video.
+SIZE_PRESETS = {
+    "1080p": (1920, 1080),
+    "1440p": (2560, 1440),
+    "2160p": (3840, 2160),
+    "4k": (3840, 2160),
+}
+
+# Named here rather than spelled out in a default=, so the CLI help, the
+# config default and the test that checks the default all read from one place.
+DEFAULT_SIZE = "1080p"
 
 
 @dataclass
@@ -52,6 +74,12 @@ class Render:
     two_up: bool = True
     crf: int = 18
     preset: str = "veryfast"
+    # Cap on the long side of the intermediate still frame. The Ken Burns move
+    # is supersampled, so the working image is several times the delivery
+    # frame; at 1080p that is about 5500px wide, which is already past the
+    # 4032px a 12MP iPhone photo provides. 0 means no cap, which is right for
+    # a library of phone photos and wrong for one of scanned film.
+    still_max_long_side: int = 0
     audio_bitrate: str = "192k"
     music_volume: float = 0.85
     # Ken Burns. 0 disables motion entirely.
@@ -128,6 +156,12 @@ class Pipeline:
     jobs: int = 0              # 0 = auto (cpu_count - 1)
     keep_temp: bool = False
     verbose: bool = True
+    # Play a Live Photo's motion clip and ambient sound instead of panning the
+    # still. On a library shot entirely on an iPhone this is most of the
+    # footage: it turns a flat pan into real movement, gives the film sound
+    # from the moment each picture was taken, and stops the still and its clip
+    # competing for the same slot in the timeline.
+    live_photos: bool = True
     # Split chapters on the calendar day alone, leaving a day that covered two
     # places as one chapter. False also splits on a 2.5km move, which suits a
     # single-day recap but would cut a travel day into five fragments.

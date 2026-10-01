@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import math
 import subprocess
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,7 +26,11 @@ from .config import Analysis
 from .ingest import Library
 from .quality import FrameMetrics, dhash, load_image, measure
 from .util import (
-    MediaInfo, ToolError, default_jobs, human_duration, log, progress,
+    MediaInfo,
+    ToolError,
+    default_jobs,
+    log,
+    progress,
     progress_done,
 )
 
@@ -190,7 +193,6 @@ def _find_cuts(motion: list[float], cfg: Analysis) -> list[int]:
 
 def _split_long(shots: list[tuple[int, int]], total: int, cfg: Analysis) -> list[tuple[int, int]]:
     """Cap shot length so one long clip cannot dominate the timeline."""
-    step = 1.0 / cfg.video_sample_fps
     max_frames = max(1, int(cfg.max_shot_seconds * cfg.video_sample_fps))
     out: list[tuple[int, int]] = []
     for a, b in shots:
@@ -411,7 +413,6 @@ def analyse_library(lib: Library, cfg: Analysis,
                 f"{len(todo)} to analyse")
         if todo:
             done = 0
-            t0 = time.time()
             # Parallel for the same reason photos are: each clip is an independent
             # ffmpeg decode in a subprocess, so the GIL is released for nearly the
             # whole of it and threads scale. A real trip library holds thousands of

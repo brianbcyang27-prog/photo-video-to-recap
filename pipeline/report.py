@@ -7,7 +7,7 @@ box.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .analysis import Item
@@ -20,7 +20,7 @@ from .util import human_duration, log
 def _fmt_time(ts: float) -> str:
     if not ts:
         return "-"
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    return datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%d %H:%M")
 
 
 def _bar(value: float, width: int = 18) -> str:
@@ -39,7 +39,7 @@ def build_report(lib: Library, items: list[Item], ctx: TripContext,
 
     a("# Trip recap - edit report")
     a("")
-    a(f"*Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*")
+    a(f"*Generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}*")
     a("")
 
     # ------------------------------------------------------------ headline
@@ -246,7 +246,7 @@ def build_report(lib: Library, items: list[Item], ctx: TripContext,
     # machine-readable EDL
     edl = out_path.with_suffix(".edl.json")
     edl.write_text(json.dumps({
-        "generated": datetime.now(timezone.utc).isoformat(),
+        "generated": datetime.now(UTC).isoformat(),
         "output": str(result.video),
         "duration": result.duration,
         "target": cut.target,

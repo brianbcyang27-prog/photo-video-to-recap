@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .analysis import Item
 from .config import Pipeline
@@ -35,7 +35,7 @@ class Entry:
     # frame. Set by pair_portrait_photos(); when present this entry's duration
     # covers both shots and both must be photos (so the pair is silent either
     # way and the audio track needs no special case).
-    pair: "Item | None" = None
+    pair: Item | None = None
     # Populated during rendering.
     motion: str = "in"
     rank_reason: str = ""
@@ -597,10 +597,19 @@ def apply_hook_order(entries: list[Entry]) -> list[str]:
 # ------------------------------------------------------------------ assembly
 
 def _motion_for(index: int, total: int) -> str:
-    """Vary the Ken Burns moves so it doesn't feel like one repeated trick."""
-    patterns = ["in", "out", "left", "right", "up", "down"]
-    # Never repeat the same move back-to-back.
-    return patterns[(index * 5 + index // 7) % len(patterns)]
+    """Vary the Ken Burns moves so it doesn't feel like one repeated trick.
+
+    The step has to be coprime with the number of patterns. The old stride of 5
+    over 6 patterns is not coprime with 6 - 5 is -1 modulo 6, so the cycle ran
+    backwards and the `index // 7` term only nudged it every seventh shot. Over
+    a 180-photo cut that handed "in" 51 shots against 25-26 for everything
+    else, and repeated a move back-to-back 25 times, which is the exact
+    uniformity this function exists to prevent. Stride 5 over 7 patterns visits
+    every one before repeating.
+    """
+    patterns = ["in", "out", "left", "right", "up", "down", "still"]
+    n = len(patterns)
+    return patterns[(index * 5 + index // n) % n]
 
 
 def _source_available(item: Item) -> float:
@@ -772,6 +781,6 @@ def _chapter_subtitle(cp, ctx: TripContext) -> str:
     if cp.items:
         parts.append(f"{len(cp.items)} shots")
     if cp.chapter.start:
-        t = datetime.fromtimestamp(cp.chapter.start, tz=timezone.utc)
+        t = datetime.fromtimestamp(cp.chapter.start, tz=UTC)
         parts.append(t.strftime("%H:%M"))
     return "  ·  ".join(parts)

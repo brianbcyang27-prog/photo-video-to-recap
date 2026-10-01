@@ -1,0 +1,122 @@
+# Build and test on every push and pull request.
+#
+# The test suite is pure logic - no ffmpeg, no media on disk, no network - so
+# it runs in a few seconds. That is deliberate: every check in it was calibrated
+# against a deliberately broken control, which is the only way to know a test
+# would actually catch the bug it describes.
+
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  # Nightly, so a break in ffmpeg compatibility is caught on a day rather than
+  # when someone tries to use the tool.
+  schedule:
+    - cron: "17 5 * * *"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest supported and newest stable, because a bug that only shows on
+        # one interpreter is a bug most contributors never see.
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: |
+          python -m pip install ruff
+          ruff check .
+
+      - name: Test
+        run: python -m pytest tests -q --tb=short
+
+      - name: Every pipeline module imports
+        # Catches a module that imports cleanly on a developer machine because
+        # of something in the virtualenv but not from a clean checkout.
+        run: |
+          python - <<'PY'
+          import importlib
+          mods = ["config", "util", "quality", "ingest", "livephoto",
+                  "analysis", "geo", "context", "music", "arrange",
+                  "select", "render", "report", "cache"]
+          for m in mods:
+              importlib.import_module(f"pipeline.{m}")
+          import make_video
+          print(f"ok: {len(mods)} pipeline modules + make_video import")
+          PY
+
+      - name: The CLI actually parses and builds a config
+        run: python make_video.py --help > /dev/null
+
+  render:
+    # A real render, on a tiny synthetic library, on one runner. This is the
+    # check the unit tests cannot do: whether ffmpeg still accepts the filter
+    # graphs, whether the encoder settings are legal at this size, and whether
+    # the audio mix comes out of loudnorm without clipping.
+    #
+    # It runs on a schedule and on demand rather than on every push, because it
+    # installs ffmpeg and does real work.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libimage-exiftool-perl
+          ffmpeg -hide_banner -filters | grep -q sidechaincompress \
+            && echo "sidechaincompress present"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Build a synthetic library
+        run: python tools/make_test_media.py
+
+      - name: Render a short film
+        run: |
+          python make_video.py \
+            --media test_media \
+            --out out \
+            --name ci \
+            --target 30 \
+            --no-geocode \
+            --no-progress-window
+
+      - name: Verify the output
+        run: python tools/verify_output.py out/ci.mp4
+
+      - name: Keep the render as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-render
+          path: out/ci.mp4
+          retention-days: 3

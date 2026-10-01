@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photo-video-to-recap"
+version = "1.0.0"
+description = "Turn a folder of trip photos, videos and iPhone Live Photos into a cinematic highlight video with an original score."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+keywords = ["video", "ffmpeg", "photos", "travel", "recap", "live-photos"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+]
+
+# Only three, and only because the rest of the toolchain is native. setup.sh
+# is the real installer: it checks ffmpeg/exiftool/sips and builds the venv.
+dependencies = [
+    "numpy",
+    "Pillow",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+# Face detection is the most useful scoring signal on a trip with people in it.
+faces = ["opencv-python-headless"]
+test = ["pytest>=8"]
+
+[project.scripts]
+photo-video-to-recap = "make_video:main"
+
+[tool.setuptools]
+py-modules = ["make_video"]
+
+[tool.setuptools.packages.find]
+include = ["pipeline*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The tests are pure logic - no ffmpeg calls, no media on disk - so they run in
+# well under a second and a failure is always a real regression.
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+# Each of these is off for a stated reason rather than because it was noisy.
+#
+# E501: the comments in this codebase carry the measurements that justify
+# non-obvious constants ("5.402 -> 5.688 mean edge energy at 2x"). Wrapping
+# them to fit 88 columns breaks the number away from the claim it supports,
+# which is worse than a long line. The number is the documentation.
+#
+# UP022: `stdout=PIPE, stderr=PIPE` is the explicit spelling and there are
+# 14 call sites. Rewriting them to capture_output=True is a no-op refactor
+# with a real chance of introducing a diff typo in a file that shells out to
+# ffmpeg. Not worth the review cost.
+#
+# B905: zip(strict=) is right in principle, but in the render and audio paths
+# the lengths are deliberately allowed to differ - a concat list and its audio
+# segments are trimmed independently, and a short one must not raise.
+#
+# B007: two loops name the item for readability (`for e in entries`) while
+# indexing separately. Renaming to `_` loses that.
+ignore = ["E501", "UP022", "B905", "B007"]
+
+[tool.ruff.lint.per-file-ignores]
+# The test suite deliberately exercises paths that need real fixtures and
+# subprocess stubs, so a few imports exist to be used for their side effects.
+"tests/*" = ["F401"]

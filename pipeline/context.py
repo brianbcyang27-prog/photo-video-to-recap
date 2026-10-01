@@ -6,19 +6,24 @@ order files happened to be written in.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
 import math
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .analysis import Item
 from .config import Pipeline
 from .geo import (
-    Chapter, Geocoder, Stop, build_chapters, cluster_stops, light_score,
+    Chapter,
+    Geocoder,
+    Stop,
+    build_chapters,
+    cluster_stops,
+    light_score,
     name_stops,
 )
 from .ingest import Library
-from .util import log, human_duration
+from .util import human_duration, log
 
 
 @dataclass
@@ -83,7 +88,7 @@ def _offsets(lib: Library) -> dict[float, int]:
 
 def local_day(ts: float, offsets: dict[float, int]) -> date:
     return datetime.fromtimestamp(
-        ts + offsets.get(ts, 0), tz=timezone.utc).date()
+        ts + offsets.get(ts, 0), tz=UTC).date()
 
 
 def build_context(lib: Library, cfg: Pipeline, cache_dir: Path,
@@ -210,7 +215,7 @@ def light_for(item: Item) -> float:
     lat, lon = item.info.latitude, item.info.longitude
     if not (lat or lon):
         # No GPS: approximate from latitude and day of year.
-        day = datetime.fromtimestamp(ts, tz=timezone.utc)
+        day = datetime.fromtimestamp(ts, tz=UTC)
         lat = max(-66.0, min(66.0, 15.0 * _daylight_offset(day.timetuple().tm_yday)))
     try:
         return light_score(ts, lat, lon)

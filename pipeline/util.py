@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -120,11 +119,12 @@ def require_tools() -> dict[str, str]:
 
 
 def human_duration(seconds: float) -> str:
+    """``M:SS`` under an hour, ``H:MM:SS`` over it."""
     seconds = max(0.0, float(seconds))
     m, s = divmod(int(round(seconds)), 60)
     if m >= 60:
         h, m = divmod(m, 60)
-        return f"{h}h{m:02d}m"
+        return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
 
 
@@ -196,6 +196,17 @@ class MediaInfo:
     # to the stored pixels. Kept because the render path needs it to turn a
     # sideways photo upright, and the tag is stripped once the image is loaded.
     exif_orientation: int = 1
+
+    # A Live Photo's motion clip, when this still has one. Not a separate
+    # asset: it holds the few seconds of movement and sound recorded alongside
+    # this exact frame, and it is rendered *as* this shot rather than on its
+    # own. See pipeline.livephoto for why that distinction matters.
+    live_motion: Path | None = None
+
+    @property
+    def is_live(self) -> bool:
+        """True when this still has motion recorded alongside it."""
+        return self.live_motion is not None
 
     @property
     def display_size(self) -> tuple[int, int]:
@@ -458,6 +469,11 @@ def parse_utc_offset(value) -> int:
         if ":" in body:
             hh, mm = body.split(":", 1)
             return sign * (int(hh) * 3600 + int(mm) * 60)
+        # No colon. Some cameras write the compact +HHMM form rather than
+        # +HH:MM, and four digits is unambiguously hours-and-minutes: reading
+        # "+0230" as 230 hours would shift every photo on the trip by weeks.
+        if len(body) == 4 and body.isdigit():
+            return sign * (int(body[:2]) * 3600 + int(body[2:]) * 60)
         return sign * int(float(body)) * 3600
     except ValueError:
         return 0

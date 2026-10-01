@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Only needed to run the test suite. Kept out of requirements.txt so that
+# installing the tool does not pull in a test framework nobody uses.
+pytest>=8

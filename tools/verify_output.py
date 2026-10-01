@@ -23,7 +23,9 @@ from PIL import Image
 # on exactly the files the pipeline handled fine.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.quality import (  # noqa: E402
-    _load_via_sips, exif_orientation, load_image,
+    _load_via_sips,
+    exif_orientation,
+    load_image,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -345,8 +347,50 @@ def main() -> int:
     check(v is not None, "video stream present")
     check(a is not None, "audio stream present")
     if v:
-        check(v.get("width") == 1920 and v.get("height") == 1080,
-              f"resolution {v.get('width')}x{v.get('height')}")
+        # Against the *plan*, not against 1920x1080. The EDL records the render
+        # settings the pipeline was asked for, so a hardcoded expectation would
+        # report a false failure on every --size 4k render - and a check that
+        # cries wolf is a check people learn to ignore. Falls back to 1080p for
+        # an EDL written before the render block existed.
+        plan = edl.get("render") or {}
+        want_w = int(plan.get("width") or 1920)
+        want_h = int(plan.get("height") or 1080)
+        want_fps = float(plan.get("fps") or 30)
+        check(v.get("width") == want_w and v.get("height") == want_h,
+              f"resolution {v.get('width')}x{v.get('height')} "
+              f"matches the planned {want_w}x{want_h}")
+        # fps was not in the original ffprobe field list, so ask again.
+        fps_probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=avg_frame_rate,level", "-of", "json",
+             str(video)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        vs = (json.loads(fps_probe.stdout or "{}").get("streams") or [{}])[0]
+        num, _, den = (vs.get("avg_frame_rate") or "0/1").partition("/")
+        got_fps = float(num or 0) / (float(den or 1) or 1)
+        check(abs(got_fps - want_fps) < 0.5,
+              f"frame rate {got_fps:.2f}fps matches the planned "
+              f"{want_fps:g}fps")
+        # The level tag has to be able to carry this frame size, or a hardware
+        # decoder that trusts it will refuse or mis-play the file. Level 4.0
+        # caps at 8192 macroblocks per frame and 4K needs 32400, and a hardcoded
+        # level used to tag every file 4.0 regardless of size - ffmpeg accepts
+        # it silently, so the wrong tag only shows up on someone else's TV.
+        level = int(vs.get("level") or 0)
+        # MaxFS from the H.264 spec, in macroblocks, keyed by level*10.
+        max_fs = {10: 99, 11: 396, 12: 396, 13: 396, 20: 396, 21: 792,
+                  22: 1620, 30: 1620, 31: 3600, 32: 5120, 40: 8192,
+                  41: 8192, 42: 8704, 50: 22080, 51: 36864, 52: 36864}
+        # A macroblock is 16x16 luma samples, and each row/column of the frame
+        # is padded up to a whole macroblock, which is why this is not simply
+        # w*h/256.
+        need_fs = ((want_w + 15) // 16) * ((want_h + 15) // 16)
+        # Phrased as a fact, not a claim, so a failure does not read as
+        # "H.264 level 40 can carry 3840x2160" in the output.
+        check(bool(level) and max_fs.get(level, 0) >= need_fs,
+              f"H.264 level {level}/{max_fs.get(level, 0):,} macroblocks vs "
+              f"{need_fs:,} needed for {want_w}x{want_h}"
+              if level else "H.264 level tag is missing")
         check(v.get("pix_fmt") == "yuv420p", f"pix_fmt {v.get('pix_fmt')} (playable everywhere)")
     if v and a:
         vd = float(v.get("duration") or 0)

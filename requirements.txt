@@ -1,0 +1,14 @@
+# Runtime dependencies.
+#
+# Deliberately short. Everything else the pipeline needs is a system tool
+# (ffmpeg, ffprobe, exiftool, sips) because those are far better maintained as
+# native binaries than as Python wheels, and setup.sh checks for them.
+
+numpy          # scoring, audio synthesis, analysis
+Pillow         # photo decoding, compositing, title cards, Ken Burns stills
+soundfile      # reading and writing WAV
+
+# Optional but recommended:
+#   opencv-python-headless   face detection, which is the single most useful
+#                            scoring signal on a trip full of people
+# Installed opportunistically by setup.sh; the pipeline runs without it.

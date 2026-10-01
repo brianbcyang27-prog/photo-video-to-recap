@@ -129,7 +129,8 @@ step "verifying the pipeline runs"
 "$VPY" - <<'PY' || die "the pipeline failed its self-test"
 import sys
 mods = ["config", "util", "quality", "ingest", "analysis", "geo",
-        "context", "music", "select", "render", "report"]
+        "context", "music", "arrange", "livephoto", "select", "render",
+        "report"]
 try:
     for m in mods:
         __import__(f"pipeline.{m}")

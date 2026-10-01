@@ -190,8 +190,8 @@ def main() -> int:
     worst = max(rates[-1] / med, med / max(rates[0], 1e-9))
     print(f"  fairness limit {FAIRNESS_LIMIT:.2f}x: "
           f"{'PASS' if worst <= FAIRNESS_LIMIT else '*** FAIL ***'}")
-    print(f"  (a no-op quota starves whole chapters and measures 16x+; the")
-    print(f"   real 14-day library measures 2.7x with correct code, 68x broken)")
+    print("  (a no-op quota starves whole chapters and measures 16x+; the")
+    print("   real 14-day library measures 2.7x with correct code, 68x broken)")
     return 0 if worst <= FAIRNESS_LIMIT else 1
 
 
