@@ -168,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     # ----------------------------------------------------------- analyse
     log("")
     log("[2/7] scoring every shot")
-    items = analyse_library(lib, cfg.analysis)
+    items = analyse_library(lib, cfg.analysis, paths["cache"])
 
     # -------------------------------------------------------- trip shape
     log("")

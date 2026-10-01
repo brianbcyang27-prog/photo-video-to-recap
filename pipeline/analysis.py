@@ -16,6 +16,13 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .cache import (
+    AnalysisCache,
+    config_fingerprint,
+    file_key,
+    item_to_record,
+    record_to_item,
+)
 from .config import Analysis
 from .ingest import Library
 from .quality import FrameMetrics, dhash, load_image, measure
@@ -316,41 +323,123 @@ def composite(m: FrameMetrics, cfg: Analysis, *, is_video: bool) -> float:
 
 # ------------------------------------------------------------------ driver
 
-def analyse_library(lib: Library, cfg: Analysis) -> list[Item]:
-    """Score everything. Returns photos plus every surviving video shot."""
+def analyse_library(lib: Library, cfg: Analysis,
+                    cache_dir: Path | None = None) -> list[Item]:
+    """Score everything. Returns photos plus every surviving video shot.
+
+    With a cache_dir, results are reused across runs. Decoding every file is
+    the dominant cost on a real library (~50 min for 12,193 files) and depends
+    only on the bytes and the config, so re-running to change the *edit* should
+    not pay for it twice. See cache.py for how the key is built to avoid
+    returning stale results that look fresh.
+    """
     items: list[Item] = []
     jobs = default_jobs()
 
+    cache = None
+    if cache_dir is not None:
+        cache = AnalysisCache(cache_dir / "analysis.jsonl", config_fingerprint(cfg))
+
+    def cached_photo(info) -> Item | None:
+        if cache is None:
+            return None
+        recs = cache.get(file_key(info, cache.cfg_fp))
+        if recs is None:
+            return None
+        rebuilt = [record_to_item(r, info) for r in recs]
+        if rebuilt:
+            return rebuilt[0]
+        return None
+
+    def cached_video(info) -> list[Item] | None:
+        if cache is None:
+            return None
+        recs = cache.get(file_key(info, cache.cfg_fp))
+        if recs is None:
+            return None
+        return [record_to_item(r, info) for r in recs]
+
+    def run_photos(pool_items):
+        """Photos: one Item each, some may be cached."""
+        hits = 0
+        out: list[Item] = []
+        todo = []
+        for info in pool_items:
+            hit = cached_photo(info)
+            if hit is not None:
+                out.append(hit)
+                hits += 1
+            else:
+                todo.append(info)
+        if hits:
+            log(f"  {hits} photo scores reused from cache, "
+                f"{len(todo)} to analyse")
+        if todo:
+            done = 0
+            with ThreadPoolExecutor(max_workers=jobs) as pool:
+                futures = {pool.submit(analyse_photo, info, cfg): info
+                           for info in todo}
+                for fut in as_completed(futures):
+                    it = fut.result()
+                    out.append(it)
+                    if cache is not None:
+                        cache.put(file_key(futures[fut], cache.cfg_fp),
+                                  [item_to_record(it)])
+                    done += 1
+                    if done % 50 == 0 or done == len(todo):
+                        log(f"  photos {done}/{len(todo)}")
+        return out
+
+    def run_videos(pool_items):
+        """Videos: several Items per clip, all cached together."""
+        hits = 0
+        out: list[Item] = []
+        todo = []
+        for info in pool_items:
+            got = cached_video(info)
+            if got is not None:
+                out.extend(got)
+                hits += 1
+            else:
+                todo.append(info)
+        if hits:
+            log(f"  {hits} clip analyses reused from cache, "
+                f"{len(todo)} to analyse")
+        if todo:
+            done = 0
+            t0 = time.time()
+            # Parallel for the same reason photos are: each clip is an independent
+            # ffmpeg decode in a subprocess, so the GIL is released for nearly the
+            # whole of it and threads scale. A real trip library holds thousands of
+            # clips, and doing them one at a time put a 4,750-clip library at ~50
+            # minutes of decoding before selection even started.
+            with ThreadPoolExecutor(max_workers=jobs) as pool:
+                futures = {pool.submit(analyse_video, info, cfg): info
+                           for info in todo}
+                for fut in as_completed(futures):
+                    got = fut.result()
+                    out.extend(got)
+                    if cache is not None:
+                        cache.put(file_key(futures[fut], cache.cfg_fp),
+                                  [item_to_record(i) for i in got])
+                    done += 1
+                    if done % 25 == 0 or done == len(todo):
+                        rate = done / max(1e-6, time.time() - t0)
+                        left = (len(todo) - done) / max(1e-6, rate)
+                        log(f"  videos {done}/{len(todo)}"
+                            f"  ({rate:.0f}/s, ~{human_duration(left)} left)")
+        return out
+
     if lib.photos:
         log(f"scoring {len(lib.photos)} photos with {jobs} workers")
-        done = 0
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
-            futures = [pool.submit(analyse_photo, info, cfg) for info in lib.photos]
-            for fut in as_completed(futures):
-                items.append(fut.result())
-                done += 1
-                if done % 50 == 0 or done == len(lib.photos):
-                    log(f"  photos {done}/{len(lib.photos)}")
+        items.extend(run_photos(lib.photos))
 
     if lib.videos:
         log(f"analysing {len(lib.videos)} videos with {jobs} workers")
-        done = 0
-        t0 = time.time()
-        # Parallel for the same reason photos are: each clip is an independent
-        # ffmpeg decode in a subprocess, so the GIL is released for nearly the
-        # whole of it and threads scale. A real trip library holds thousands of
-        # clips, and doing them one at a time put a 4,750-clip library at ~50
-        # minutes of decoding before selection even started.
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
-            futures = [pool.submit(analyse_video, info, cfg) for info in lib.videos]
-            for fut in as_completed(futures):
-                items.extend(fut.result())
-                done += 1
-                if done % 25 == 0 or done == len(lib.videos):
-                    rate = done / max(1e-6, time.time() - t0)
-                    left = (len(lib.videos) - done) / max(1e-6, rate)
-                    log(f"  videos {done}/{len(lib.videos)}"
-                        f"  ({rate:.0f}/s, ~{human_duration(left)} left)")
+        items.extend(run_videos(lib.videos))
+
+    if cache is not None:
+        cache.flush()
 
     for it in items:
         if it.kind == "photo":
