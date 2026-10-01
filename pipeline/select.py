@@ -207,7 +207,7 @@ def _greedy_fill(deduped: list[Item], ctx: TripContext, cfg: Pipeline,
         return chosen
 
     # Phase 2: give every chapter its share, best shots first within each.
-    quotas = _chapter_quotas(deduped, ctx, min_photo, min_video)
+    quotas = _chapter_quotas(deduped, ctx, min_photo, min_video, target_content)
     for index, quota in quotas.items():
         spent = 0.0
         for it in deduped:
@@ -235,7 +235,8 @@ def _greedy_fill(deduped: list[Item], ctx: TripContext, cfg: Pipeline,
 
 
 def _chapter_quotas(deduped: list[Item], ctx: TripContext,
-                    min_photo: float, min_video: float) -> dict[int, float]:
+                    min_photo: float, min_video: float,
+                    target_content: float) -> dict[int, float]:
     """Screen time to hold in reserve for each chapter, keyed by index."""
     available: dict[int, float] = {}
     for it in deduped:
@@ -251,6 +252,23 @@ def _chapter_quotas(deduped: list[Item], ctx: TripContext,
 
     # Share in proportion to usable material, but never below what one shot
     # needs, so a sparse day still contributes something to the story.
+    #
+    # Two separate unit bugs lived here, both invisible until a chapter held
+    # thousands of shots instead of dozens:
+    #
+    #   * `share` is a *fraction* - the weights sum to 1 - but it was being
+    #     handed back as a number of seconds. Quotas summed to
+    #     TOTAL_QUOTA_FRACTION seconds in total, so nothing was ever
+    #     constrained and the "quota" was pure decoration.
+    #   * the floor was the whole chapter (`max(available[idx], share)`) rather
+    #     than one shot. `available[idx]` is every usable item in the chapter
+    #     summed, so a 1001-shot day claimed a ~2600-second quota against a
+    #     545-second video.
+    #
+    # Either one alone makes the fill fall through to "take everything in
+    # chapter order until the budget is gone". The observed result on the real
+    # library: the first three days took 73% of a ten-minute video, and the day
+    # holding 1810 shots earned 12.5 seconds of screen time.
     total_avail = sum(available.values()) or 1.0
     weights = {i: v / total_avail for i, v in available.items()}
     out: dict[int, float] = {}
@@ -258,8 +276,8 @@ def _chapter_quotas(deduped: list[Item], ctx: TripContext,
         idx = cp.chapter.index
         if idx not in available:
             continue
-        share = weights[idx] * TOTAL_QUOTA_FRACTION
-        out[idx] = max(available[idx], share)
+        out[idx] = max(min_photo,
+                       weights[idx] * TOTAL_QUOTA_FRACTION * target_content)
     return out
 
 
@@ -383,12 +401,39 @@ def _fit_bounds(weights: list[float], total: int,
 
 
 def _base_weights(entries: list[Entry]) -> list[float]:
-    """Longer on the better material, but never wildly uneven."""
+    """Longer on the better material, but never wildly uneven.
+
+    Selection already reserves each chapter a quota of screen time, so the
+    counts come out roughly right. This function then decides how those beats
+    are shared *within* a chapter, and it used to weight purely by item score -
+    with no chapter term at all. So a chapter whose shots all scored well
+    absorbed far more time than its quota, and one full of ordinary shots
+    absorbed almost none, undoing the quota work and skewing the finished edit
+    back toward whichever days happened to rate highest.
+
+    Averaging the weight across each chapter's own items adds the missing term:
+    every chapter is centred on its own mean, so chapters whose material is
+    uniformly strong stop out-competing chapters that merely have one standout
+    shot. The score spread within a chapter is preserved exactly as before.
+    """
     scores = [max(0.02, e.score) for e in entries]
     lo = min(scores)
     hi = max(scores)
     span = max(1e-6, hi - lo)
-    return [0.78 + 0.44 * ((s - lo) / span) for s in scores]
+    raw = [0.78 + 0.44 * ((s - lo) / span) for s in scores]
+
+    by_chapter: dict[int, list[int]] = {}
+    for i, e in enumerate(entries):
+        by_chapter.setdefault(e.chapter, []).append(i)
+    global_mean = sum(raw) / len(raw)
+    for idxs in by_chapter.values():
+        mean = sum(raw[i] for i in idxs) / len(idxs)
+        # Re-express every entry as its own deviation from its chapter's mean,
+        # then add the overall mean back. Within-chapter spread and ordering
+        # are untouched; only the offset between chapters moves.
+        for i in idxs:
+            raw[i] = (raw[i] - mean) + global_mean
+    return [max(0.02, v) for v in raw]
 
 
 def assign_timing(entries: list[Entry], total_seconds: float,
