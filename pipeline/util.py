@@ -31,6 +31,72 @@ def log(msg: str, *, level: str = "info") -> None:
     sys.stderr.flush()
 
 
+# ------------------------------------------------------------------ progress
+
+# One line, rewritten in place, so a 27-minute phase does not look like a hang.
+# When output is a file or a pipe a carriage return is invisible and every
+# redraw would leave its own line behind, so the same numbers are written out
+# as ordinary log lines instead, at a readable interval.
+_TTY = sys.stderr.isatty()
+_PROGRESS_LAST: dict[str, float] = {}
+
+
+def _hms(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def progress(label: str, done: int, total: int, *, every: float = 5.0) -> None:
+    """Show how far a long phase has got, with a rate and an estimate.
+
+    The estimate is measured, not assumed: it comes from how fast this phase
+    has actually been going, and it is left blank until there is enough of a
+    sample to mean anything. Reporting a wildly wrong ETA is worse than
+    reporting none.
+    """
+    total = max(0, int(total))
+    done = max(0, int(done))
+    pct = (100.0 * done / total) if total else 100.0
+    now = time.time()
+    started = _PROGRESS_LAST.get(f"{label}__start", now)
+    _PROGRESS_LAST[f"{label}__start"] = started
+    elapsed = now - started
+    rate = (done / elapsed) if elapsed > 0.75 and done else 0.0
+    eta = (total - done) / rate if rate > 0 and done < total else None
+
+    detail = f"{done}/{total}  {pct:5.1f}%"
+    if rate:
+        detail += f"  {rate:5.1f}/s"
+    if eta is not None:
+        detail += f"  eta {_hms(eta)}"
+
+    if _TTY:
+        # Redraw at ~12fps; the eye cannot use more and each redraw is a write.
+        if now - _PROGRESS_LAST.get(label, 0.0) < 0.08 and done < total:
+            return
+        _PROGRESS_LAST[label] = now
+        end = "\n" if done >= total else ""
+        sys.stderr.write(f"\r\033[K  {label:<22}{detail}{end}")
+        sys.stderr.flush()
+        return
+
+    # Redirected: one line every few seconds, plus the last one.
+    last = _PROGRESS_LAST.get(label, 0.0)
+    if done >= total or now - last >= every:
+        _PROGRESS_LAST[label] = now
+        log(f"{label} {detail}")
+
+
+def progress_done(label: str) -> None:
+    """Close a progress line that may have been left open on a terminal."""
+    if _TTY and _PROGRESS_LAST.get(label):
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+        _PROGRESS_LAST[label] = 0.0
+
+
 class PipelineError(RuntimeError):
     pass
 

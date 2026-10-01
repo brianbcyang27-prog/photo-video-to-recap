@@ -209,39 +209,59 @@ def _check_rotation(video: Path, entries: list[dict], check) -> None:
     the source: the orientation the camera recorded, and the pixels as stored,
     which for a quarter-turn is exactly the other way round. The recorded one
     has to match better.
+
+    Which strip of the frame to compare matters. Sampling the middle of a
+    two-up spread catches the tail of one photo and the head of its partner,
+    and neither hypothesis then matches anything: that is what made this check
+    report a portrait photo as sideways when it was not. Each photo is compared
+    against the half it actually occupies.
     """
     good = bad = tested = 0
     for e in entries:
-        if tested >= 6:
+        if tested >= 8:
             break
-        if e["type"] != "photo" or not e.get("source"):
+        if e["type"] != "photo":
             continue
-        src = Path(e["source"])
-        if not src.exists():
-            continue
-        try:
-            o = exif_orientation(src)
-        except Exception:
-            continue
-        if o < 5:                      # no quarter turn to confuse us with
-            continue
-        upright = load_image(src)
-        stored = _load_via_sips(src)
-        if upright is None or stored is None:
-            continue
-        frame = luma(grab(video, e["start"] + min(0.4, e["duration"] / 2)))
-        if frame.shape[0] < 100:
-            continue
-        h, w = frame.shape
-        band = _norm(_small(frame[int(h * 0.15):int(h * 0.85),
-                                int(w * 0.30):int(w * 0.70)]))
-        su = _norm(_small(np.asarray(upright.convert("L"))))
-        ss = _norm(_small(np.asarray(stored.convert("L"))))
-        tested += 1
-        if float((band * su).mean()) > float((band * ss).mean()):
-            good += 1
+        # (path, the slice of the frame it should occupy)
+        #
+        # A spread puts its two photos in the left and right halves. A lone
+        # portrait shot with blur-fill puts its photo in the *middle*, with
+        # blurred sides either side of it. Sampling the left half of a lone
+        # shot therefore measures mostly blur, which is how three correct
+        # photos came to be reported as sideways here.
+        if e.get("pair"):
+            candidates = [(e.get("source"), (0.02, 0.47)),
+                          (e["pair"], (0.53, 0.98))]
         else:
-            bad += 1
+            candidates = [(e.get("source"), (0.30, 0.70))]
+        for src_name, (x0, x1) in candidates:
+            if not src_name:
+                continue
+            src = Path(src_name)
+            if not src.exists():
+                continue
+            try:
+                if exif_orientation(src) < 5:   # no quarter turn to confuse us
+                    continue
+            except Exception:
+                continue
+            upright = load_image(src)
+            stored = _load_via_sips(src)
+            if upright is None or stored is None:
+                continue
+            frame = luma(grab(video, e["start"] + min(0.4, e["duration"] / 2)))
+            if frame.shape[0] < 100:
+                continue
+            h, w = frame.shape
+            band = _norm(_small(frame[int(h * 0.15):int(h * 0.85),
+                                    int(w * x0):int(w * x1)]))
+            su = _norm(_small(np.asarray(upright.convert("L"))))
+            ss = _norm(_small(np.asarray(stored.convert("L"))))
+            tested += 1
+            if float((band * su).mean()) > float((band * ss).mean()):
+                good += 1
+            else:
+                bad += 1
     if tested:
         check(bad == 0,
               f"quarter-turned photos shown upright, not on their side: "

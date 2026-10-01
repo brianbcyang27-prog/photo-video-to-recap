@@ -21,7 +21,10 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 from .config import Pipeline
 from .music import MusicResult
 from .select import CutList, Entry
-from .util import ToolError, default_jobs, ensure_dir, human_duration, log, run
+from .util import (
+    ToolError, default_jobs, ensure_dir, human_duration, log, progress,
+    progress_done, run,
+)
 
 AUDIO_RATE = 48000
 # Extra resolution fed to zoompan so the pan/zoom does not soften the image.
@@ -637,6 +640,8 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
                              fit_for(src.width / max(1, src.height), cfg))
             canvas.save(target)
             frame_for[i] = target
+        progress("preparing frames", i + 1, len(entries))
+    progress_done("preparing frames")
 
     # ---- segments
     jobs = cfg.jobs or default_jobs()
@@ -660,8 +665,8 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
             idx, path = fut.result()
             seg_paths[idx] = path
             done += 1
-            if done % 5 == 0 or done == len(entries):
-                log(f"  segments {done}/{len(entries)}")
+            progress("rendering segments", done, len(entries))
+        progress_done("rendering segments")
 
     good = [p for p in seg_paths if p is not None]
     if len(good) != len(entries):
@@ -717,8 +722,12 @@ def _extract_all(entries: list[Entry], cfg: Pipeline, order: list[Path],
             pool.submit(extract_segment_audio, e, cfg, order[i]): i
             for i, e in enumerate(entries)
         }
+        done = 0
         for fut in as_completed(futures):
             fut.result()
+            done += 1
+            progress("extracting audio", done, len(futures))
+        progress_done("extracting audio")
     return order, []
 
 

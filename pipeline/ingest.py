@@ -10,12 +10,12 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .config import AUDIO_EXT, PHOTO_EXT, VIDEO_EXT, Pipeline
 from .util import (
     MediaInfo, PipelineError, ToolError, default_jobs, exiftool_metadata, log,
-    parse_exif_datetime, parse_utc_offset,
+    parse_exif_datetime, parse_utc_offset, progress, progress_done,
     _gps, probe,
 )
 
@@ -199,7 +199,20 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
     work = ([(p, "photo") for p in photo_paths]
             + [(p, "video") for p in video_paths])
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        results = list(pool.map(lambda pc: classify(*pc), work))
+        # as_completed rather than pool.map, so the wait can be reported. The
+        # results are written back by index because the order still matters to
+        # the caller: pool.map was what guaranteed work[i] went with results[i],
+        # and losing that would scramble which classification belongs to which
+        # file. This phase is minutes of silence on a real library otherwise,
+        # which is indistinguishable from a hang.
+        futures = {pool.submit(classify, p, k): i for i, (p, k) in enumerate(work)}
+        results = [None] * len(work)
+        done = 0
+        for fut in as_completed(futures):
+            results[futures[fut]] = fut.result()
+            done += 1
+            progress("probing files", done, len(work))
+        progress_done("probing files")
 
     for (p, _kind), (path, info, why) in zip(work, results):
         if why:

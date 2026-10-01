@@ -26,7 +26,10 @@ from .cache import (
 from .config import Analysis
 from .ingest import Library
 from .quality import FrameMetrics, dhash, load_image, measure
-from .util import MediaInfo, ToolError, default_jobs, human_duration, log
+from .util import (
+    MediaInfo, ToolError, default_jobs, human_duration, log, progress,
+    progress_done,
+)
 
 # Calibration constants, derived from typical phone-camera output measured
 # at the shared analysis resolution (see Analysis.analysis_long_side).
@@ -387,8 +390,8 @@ def analyse_library(lib: Library, cfg: Analysis,
                         cache.put(file_key(futures[fut], cache.cfg_fp),
                                   [item_to_record(it)])
                     done += 1
-                    if done % 50 == 0 or done == len(todo):
-                        log(f"  photos {done}/{len(todo)}")
+                    progress("scoring photos", done, len(todo))
+            progress_done("scoring photos")
         return out
 
     def run_videos(pool_items):
@@ -424,11 +427,8 @@ def analyse_library(lib: Library, cfg: Analysis,
                         cache.put(file_key(futures[fut], cache.cfg_fp),
                                   [item_to_record(i) for i in got])
                     done += 1
-                    if done % 25 == 0 or done == len(todo):
-                        rate = done / max(1e-6, time.time() - t0)
-                        left = (len(todo) - done) / max(1e-6, rate)
-                        log(f"  videos {done}/{len(todo)}"
-                            f"  ({rate:.0f}/s, ~{human_duration(left)} left)")
+                    progress("scoring videos", done, len(todo))
+            progress_done("scoring videos")
         return out
 
     if lib.photos:

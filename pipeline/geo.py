@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from .util import log
+from .util import log, progress, progress_done
 
 EARTH_RADIUS_KM = 6371.0088
 
@@ -350,8 +350,8 @@ def name_stops(stops: list[Stop], geocoder: Geocoder) -> None:
     log(f"resolving place names for {len(pending)} stops")
     for i, s in enumerate(pending):
         s.name = geocoder.lookup(s.lat, s.lon)
-        if (i + 1) % 5 == 0:
-            log(f"  places {i + 1}/{len(pending)}")
+        progress("resolving places", i + 1, len(pending))
+    progress_done("resolving places")
     # Fall back to a compact coordinate label when nothing resolved.
     unnamed = 0
     for s in stops:
