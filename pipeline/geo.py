@@ -116,6 +116,15 @@ def light_score(ts: float, lat: float, lon: float) -> float:
 
 # --------------------------------------------------------- reverse geocoding
 
+# A dropped connection is nearly always momentary. Three tries with a growing
+# pause costs a couple of seconds in the rare bad case and saves the entire
+# run's place names in the common one.
+TRANSIENT_RETRIES = 3
+RETRY_BACKOFF = 1.5
+# How many failures in a row count as "the network is gone" rather than a blip.
+MAX_CONSECUTIVE_FAILURES = 8
+
+
 class Geocoder:
     """Nominatim reverse lookup, cached to disk, fully optional.
 
@@ -130,6 +139,7 @@ class Geocoder:
         self.zoom = zoom
         self._mem: dict[tuple[float, float], str] = {}
         self._unavailable = False
+        self._consecutive_failures = 0
 
     def _key(self, lat: float, lon: float) -> str:
         # ~1.1 km cells: everyone standing in the same spot shares a lookup.
@@ -156,26 +166,63 @@ class Geocoder:
 
         url = ("https://nominatim.openstreetmap.org/reverse?format=jsonv2"
                f"&lat={lat:.4f}&lon={lon:.4f}&zoom={self.zoom}")
+
+        # A single dropped connection must not cost the whole run its place
+        # names. On the first full render of the real library, one URLError
+        # after ~10 successful lookups set `_unavailable` for good, and the
+        # remaining 328 stops were written to the timeline as bare coordinates
+        # ("51.75, -1.26") even though every one of them resolves fine from
+        # cache today. URLError covers DNS blips, refused connections, resets
+        # and timeouts - all transient - so it is retried rather than treated
+        # as a verdict.
         name = ""
-        try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "trip-recap-pipeline/1.0 (personal project)",
-                "Accept-Language": "en",
-            })
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                data = json.loads(resp.read().decode("utf-8", "replace"))
-            name = _format_place(data)
-            path.write_text(json.dumps({"name": name, "lat": lat, "lon": lon}))
-        except urllib.error.HTTPError as exc:
-            if exc.code in (403, 429):
-                log(f"geocoding rate-limited ({exc.code}); using coordinates only",
+        last = "unknown"
+        for attempt in range(1, TRANSIENT_RETRIES + 1):
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "trip-recap-pipeline/1.0 (personal project)",
+                    "Accept-Language": "en",
+                })
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    data = json.loads(resp.read().decode("utf-8", "replace"))
+                name = _format_place(data)
+                try:
+                    path.write_text(json.dumps(
+                        {"name": name, "lat": lat, "lon": lon}))
+                except OSError:
+                    pass  # A cache we cannot write is not worth failing over.
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code in (403, 429):
+                    # Rate limiting is a real answer from the server, and
+                    # hammering it would make things worse.
+                    log(f"geocoding rate-limited ({exc.code}); "
+                        f"using coordinates only", level="warn")
+                    self._unavailable = True
+                    break
+                # 404/5xx etc: worth another try.
+                last = f"HTTP {exc.code}"
+            except (urllib.error.URLError, TimeoutError, OSError,
+                    json.JSONDecodeError, ValueError) as exc:
+                last = exc.__class__.__name__
+            if attempt < TRANSIENT_RETRIES:
+                delay = RETRY_BACKOFF * attempt
+                log(f"geocoding lookup failed ({last}); retrying in "
+                    f"{delay:.1f}s [{attempt}/{TRANSIENT_RETRIES}]")
+                time.sleep(delay)
+
+        if name:
+            self._consecutive_failures = 0
+        else:
+            self._consecutive_failures += 1
+            # Give up only on sustained failure. One dead lookup is a blip;
+            # a run of them means the network is genuinely gone, and 338
+            # timeouts at 12s each would otherwise waste over an hour.
+            if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                log(f"{self._consecutive_failures} geocoding lookups failed in a "
+                    f"row; giving up on place names and using coordinates",
                     level="warn")
                 self._unavailable = True
-        except (urllib.error.URLError, TimeoutError, OSError,
-                json.JSONDecodeError, ValueError) as exc:
-            log(f"geocoding unavailable ({exc.__class__.__name__}); "
-                f"using coordinates only", level="warn")
-            self._unavailable = True
 
         if name:
             time.sleep(1.0)  # Nominatim asks for <= 1 req/sec
@@ -306,9 +353,16 @@ def name_stops(stops: list[Stop], geocoder: Geocoder) -> None:
         if (i + 1) % 5 == 0:
             log(f"  places {i + 1}/{len(pending)}")
     # Fall back to a compact coordinate label when nothing resolved.
+    unnamed = 0
     for s in stops:
         if not s.name and s.has_gps():
             s.name = f"{s.lat:.2f}, {s.lon:.2f}"
+            unnamed += 1
+    if unnamed:
+        # These labels go on screen, so a silent fallback would hide the
+        # difference between "nowhere in particular" and "we could not ask".
+        log(f"{unnamed} of {len(pending)} stops have no place name and will be "
+            f"labelled by coordinates", level="warn")
 
 
 # ---------------------------------------------------------------- chapters
