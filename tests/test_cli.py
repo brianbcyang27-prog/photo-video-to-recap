@@ -1,6 +1,6 @@
 """The progress window, and the trap that hid it being broken.
 
-The window feature was silently dead: it calls `json.dumps` to quote a command
+The window feature was silently dead: it called `json.dumps` to quote a command
 for AppleScript, `json` was never imported, and the whole call sits inside a
 `try/except Exception: return None`. So the NameError was swallowed and no
 window ever opened - and the earlier manual check, "does the number of Terminal
@@ -10,11 +10,19 @@ That is the failure mode worth testing: not "does the function return an id" but
 "does it fail for a reason other than the one it is allowed to fail for". So
 these tests drive the real function with the external call stubbed out, which
 leaves only the code under test.
+
+They are also pinned to macOS, which the first CI run taught the hard way. The
+function returns None immediately off darwin - and that early return looks
+exactly like the swallowed NameError above, so on Linux these tests passed for
+the wrong reason until they failed for no visible one. A test that cannot fail
+on the platform it is running on is a test that is not running.
 """
 from __future__ import annotations
 
 import shlex
 import sys
+
+import pytest
 
 import make_video
 
@@ -25,7 +33,22 @@ class _Result:
         self.returncode = returncode
 
 
-def test_progress_window_builds_a_real_applescript_call(tmp_path, monkeypatch):
+@pytest.fixture
+def on_macos(monkeypatch):
+    """Pretend to be macOS.
+
+    open_progress_window returns None immediately off darwin, so these tests
+    only ever exercised the function on the machine they were written on -
+    and passed in CI on Linux for the wrong reason: the early return looks
+    identical to the swallowed NameError they exist to catch. The first CI run
+    failed on both, which is how this showed up. So the platform is pinned and
+    the early return is asserted on separately below.
+    """
+    monkeypatch.setattr(make_video.sys, "platform", "darwin")
+
+
+def test_progress_window_builds_a_real_applescript_call(tmp_path, monkeypatch,
+                                                       on_macos):
     """The whole point: the call is actually built and returns a window id.
 
     This is the test that would have caught the dead progress window. That
@@ -54,7 +77,19 @@ def test_progress_window_builds_a_real_applescript_call(tmp_path, monkeypatch):
     assert sys.stderr is not None
 
 
-def test_the_shell_command_is_passed_as_an_argument_not_pasted_in(tmp_path, monkeypatch):
+def test_the_window_is_macos_only_and_says_so(tmp_path, monkeypatch):
+    """Off darwin the feature is absent, not broken - and it must not try."""
+    monkeypatch.setattr(make_video.sys, "platform", "linux")
+    ran = []
+    monkeypatch.setattr(make_video.subprocess, "run",
+                        lambda cmd, **kw: ran.append(cmd) or _Result())
+    assert make_video.open_progress_window(tmp_path / "p.log") is None
+    assert not ran, "it must not shell out to osascript on Linux"
+
+
+def test_the_shell_command_is_passed_as_an_argument_not_pasted_in(tmp_path,
+                                                                 monkeypatch,
+                                                                 on_macos):
     """Escaping by hand does not work; argv makes it a non-problem.
 
     json.dumps does not escape single quotes and shlex.quote emits '"'"' for a
@@ -88,7 +123,8 @@ def test_the_shell_command_is_passed_as_an_argument_not_pasted_in(tmp_path, monk
     assert "tail" not in cmd[-2] and str(awkward) not in cmd[-2]
 
 
-def test_returns_none_when_the_external_call_fails(tmp_path, monkeypatch):
+def test_returns_none_when_the_external_call_fails(tmp_path, monkeypatch,
+                                                  on_macos):
     monkeypatch.setattr(make_video.subprocess, "run",
                         lambda cmd, **kw: _Result(returncode=1))
     assert make_video.open_progress_window(tmp_path / "p.log") is None
