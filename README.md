@@ -1,5 +1,9 @@
 # Trip Recap Builder
 
+[![tests](https://github.com/brianbcyang27-prog/photo-video-to-recap/actions/workflows/tests.yml/badge.svg)](https://github.com/brianbcyang27-prog/photo-video-to-recap/actions/workflows/tests.yml)
+[![licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![macOS](https://img.shields.io/badge/macOS-ffmpeg%20%2B%20exiftool-informational.svg)](https://ffmpeg.org)
+
 Drop a folder of unorganised photos, videos and iPhone Live Photos in. Get back
 a finished, beat-synced travel recap MP4 — plus a report explaining every
 decision it made.
