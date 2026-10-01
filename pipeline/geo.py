@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .util import log
@@ -331,31 +331,42 @@ class Chapter:
 def build_chapters(entries: list[tuple[float, float, float]],
                    stops: list[Stop],
                    *,
-                   gap_hours: float = 5.0) -> list[Chapter]:
-    """Split the trip where there is a long time gap or a real move.
+                   gap_hours: float = 5.0,
+                   offsets: dict[float, int] | None = None,
+                   split_on_move: bool = True) -> list[Chapter]:
+    """Split the trip where there is a long time gap, a real move, or a new day.
 
     entries: [(lat, lon, ts)] in capture order.
+    offsets: optional ts -> utc_offset seconds, so "same calendar day" is judged
+        where the camera actually was rather than in UTC.
+    split_on_move: when false, only the day and the time gap end a chapter. That
+        is what a date-led recap wants: a day that covered two towns is still
+        one day, with the move showing up as a subtitle instead of a break.
     """
     ordered = sorted(entries, key=lambda e: e[2])
     if not ordered:
         return []
 
+    offsets = offsets or {}
     gap_seconds = gap_hours * 3600.0
     chapters: list[Chapter] = []
     current: list[tuple[float, float, float]] = [ordered[0]]
+    cur_day = _local_day(ordered[0][2], offsets)
 
     for prev, cur in zip(ordered, ordered[1:]):
         dt = cur[2] - prev[2]
         moved = False
-        if prev[0] or prev[1]:
+        if split_on_move and (prev[0] or prev[1]):
             d = haversine_km(prev[0], prev[1], cur[0], cur[1]) * 1000.0
             moved = d >= NEW_PLACE_M
-        if dt >= gap_seconds or moved:
-            chapters.append(_close_chapter(len(chapters), current, stops))
+        day = _local_day(cur[2], offsets)
+        if dt >= gap_seconds or moved or day != cur_day:
+            chapters.append(_close_chapter(len(chapters), current, stops, offsets))
             current = []
+            cur_day = day
         current.append(cur)
 
-    chapters.append(_close_chapter(len(chapters), current, stops))
+    chapters.append(_close_chapter(len(chapters), current, stops, offsets))
     # No filtering here. Every chapter holds at least one entry by
     # construction, and a chapter built from a single instant is perfectly
     # real - a burst of photos sharing a timestamp, or a place visited once.
@@ -365,9 +376,16 @@ def build_chapters(entries: list[tuple[float, float, float]],
     return chapters
 
 
+def _local_day(ts: float, offsets: dict[float, int]) -> date:
+    """Calendar date of a shot in the timezone it was taken in."""
+    return datetime.fromtimestamp(
+        ts + offsets.get(ts, 0), tz=timezone.utc).date()
+
+
 def _close_chapter(index: int,
                    entries: list[tuple[float, float, float]],
-                   stops: list[Stop]) -> Chapter:
+                   stops: list[Stop],
+                   offsets: dict[float, int] | None = None) -> Chapter:
     start = entries[0][2]
     end = entries[-1][2]
     dominant: Stop | None = None
@@ -378,20 +396,13 @@ def _close_chapter(index: int,
             default=None,
         )
         dominant = best
-    day = datetime.fromtimestamp(start, tz=timezone.utc)
+    d = _local_day(start, offsets or {})
+    weekday = d.strftime("%a")
+    label = f"{weekday} {d.strftime('%b')} {d.day}"
     return Chapter(
         index=index,
         start=start,
         end=end,
         stop=dominant,
-        day_label=day.strftime("%b %-d") if _supports_dash_d() else day.strftime("%b %d"),
+        day_label=label,
     )
-
-
-def _supports_dash_d() -> bool:
-    # %-d is glibc/BSD; guard for platforms that only accept %d.
-    try:
-        datetime(2020, 1, 5).strftime("%-d")
-        return True
-    except ValueError:
-        return False

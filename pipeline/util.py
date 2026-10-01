@@ -114,8 +114,14 @@ class MediaInfo:
     codec: str = ""
     pix_fmt: str = ""
     # EXIF / filesystem
-    captured: float = 0.0          # unix timestamp; 0 if unknown
+    captured: float = 0.0          # unix timestamp (true UTC); 0 if unknown
     captured_source: str = "mtime"
+    # Seconds east of UTC for the place the photo was taken, from the camera's
+    # own OffsetTimeOriginal. Day-based chaptering needs this: without it every
+    # timestamp is treated as UTC, a shot taken at 23:30 in London lands on the
+    # following day, and chapters split in the wrong place. 0 when unknown,
+    # which is correct for cameras that record UTC.
+    utc_offset: int = 0
     latitude: float = 0.0
     longitude: float = 0.0
     camera: str = ""
@@ -222,7 +228,11 @@ def probe(path: Path, kind: str) -> MediaInfo:
     # needs care is agreeing with it about which way up the frames are, so when
     # a display matrix is present and the two answers could differ, ask ffmpeg
     # what it will actually decode rather than guessing from the metadata.
-    if kind == "video" and rot:
+    #
+    # Only a quarter turn can change the reported orientation. A 180-degree
+    # matrix leaves width and height untouched, so there is nothing to
+    # reconcile and the decode probe must be skipped - it is pure cost.
+    if kind == "video" and rot % 180:
         true_w, true_h = decoded_size(path)
         if true_w and true_h:
             info.width, info.height = true_w, true_h
@@ -237,12 +247,18 @@ def decoded_size(path: Path) -> tuple[int, int]:
     side data entry. Reading the two as equivalent silently transposes half the
     library, so this decodes a single frame and reports the truth. Cheap enough
     to call only in the ambiguous case.
+
+    No scaling filter: a resized frame reports the size it was scaled *to*, not
+    the size of the source, which is the one number this function exists to
+    find. An earlier version used ``scale=320:-2`` and cheerfully reported a
+    1920x1080 clip as 320x180, which then failed the 320px quality floor and
+    threw the clip away as unusably small.
     """
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "frame.png"
         proc = subprocess.run(
             ["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1",
-             "-vf", "scale=320:-2", "-y", str(out)],
+             "-y", str(out)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         if proc.returncode != 0 or not out.exists():
@@ -269,6 +285,10 @@ def exiftool_metadata(paths: list[Path]) -> dict[str, dict]:
     out: dict[str, dict] = {}
     wanted = [
         "DateTimeOriginal", "CreateDate", "MediaCreateDate", "TrackCreateDate",
+        # The UTC offset the camera recorded alongside the wall-clock time.
+        # Without it a photo taken at 00:30 in London reads as the previous day
+        # and the trip gets split in the wrong place.
+        "OffsetTimeOriginal", "OffsetTime", "OffsetTimeDigitized",
         "GPSLatitude", "GPSLatitudeRef", "GPSLongitude", "GPSLongitudeRef",
         "Make", "Model", "ImageWidth", "ImageHeight", "Rotation",
     ]
@@ -321,8 +341,42 @@ _DATE_FORMATS = (
 )
 
 
-def parse_exif_datetime(value) -> float:
-    """Convert an EXIF date string to a unix timestamp. 0.0 if unparseable."""
+def parse_utc_offset(value) -> int:
+    """Seconds east of UTC from an EXIF offset string like ``+01:00``.
+
+    Also accepts the numeric form exiftool emits with ``-n`` (minutes) and
+    ``Z``. Returns 0 when there is nothing usable, which is the right answer
+    for a camera that recorded UTC or for a file with no offset at all.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        # With -n exiftool reports OffsetTime* in minutes. Someone's library
+        # will contain both forms; minutes is the only sane reading of a bare
+        # number here, since a raw seconds value would be absurd for an offset.
+        return int(round(float(value) * 60))
+    text = str(value).strip()
+    if not text or text.upper() in ("Z", "UTC", "GMT"):
+        return 0
+    sign = -1 if text[0] == "-" else 1
+    body = text.lstrip("+-")
+    try:
+        if ":" in body:
+            hh, mm = body.split(":", 1)
+            return sign * (int(hh) * 3600 + int(mm) * 60)
+        return sign * int(float(body)) * 3600
+    except ValueError:
+        return 0
+
+
+def parse_exif_datetime(value, utc_offset: int = 0) -> float:
+    """Convert an EXIF date string to a unix timestamp. 0.0 if unparseable.
+
+    EXIF wall-clock times are local to where the photo was taken, not UTC. The
+    camera usually records the offset alongside them, so pass it here to get a
+    real instant in time. With no offset the value is read as UTC, which is what
+    the tag means on cameras that do not record one.
+    """
     if value is None:
         return 0.0
     if isinstance(value, (int, float)):
@@ -332,13 +386,17 @@ def parse_exif_datetime(value) -> float:
     text = str(value).strip()
     if not text or text in ("0000:00:00 00:00:00",):
         return 0.0
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     for fmt in _DATE_FORMATS:
         try:
             dt = datetime.strptime(text, fmt)
             if dt.year < 1990:
                 return 0.0
-            return dt.replace(tzinfo=timezone.utc).timestamp()
+            # Treat the wall clock as local to where the shot was taken, then
+            # convert to a real instant. UTC is the fallback for cameras that
+            # record no offset of their own.
+            tz = timezone(timedelta(seconds=utc_offset))
+            return dt.replace(tzinfo=tz).timestamp()
         except ValueError:
             continue
     return 0.0

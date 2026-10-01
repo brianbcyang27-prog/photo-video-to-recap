@@ -270,7 +270,11 @@ def build_report(lib: Library, items: list[Item], ctx: TripContext,
                 "start": round(t, 3),
                 "duration": round(e.duration, 3),
                 "beats": e.beats,
-                "type": e.kind,
+                # "title" for a chapter card, otherwise the media kind. A card
+                # previously reported type="title" with no title text, which
+                # meant the EDL said a title existed but not what it said -
+                # and my own analysis script crashed on the missing source.
+                "type": "title" if e.is_title else e.kind,
                 "title": e.title or None,
                 "subtitle": e.subtitle or None,
                 "source": str(e.item.info.path) if e.item else None,

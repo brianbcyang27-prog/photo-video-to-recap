@@ -105,6 +105,10 @@ class Pipeline:
     jobs: int = 0              # 0 = auto (cpu_count - 1)
     keep_temp: bool = False
     verbose: bool = True
+    # Split chapters on the calendar day alone, leaving a day that covered two
+    # places as one chapter. False also splits on a 2.5km move, which suits a
+    # single-day recap but would cut a travel day into five fragments.
+    chapter_on_move: bool = False
 
     def to_dict(self) -> dict:
         d = asdict(self)

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from .analysis import Item
 from .config import Pipeline
@@ -661,10 +662,17 @@ def build_cutlist(items: list[Item], ctx: TripContext, cfg: Pipeline,
 
 
 def _chapter_subtitle(cp, ctx: TripContext) -> str:
-    from .ingest import day_index
+    """The line under the chapter card: where, then how much, then when.
+
+    The date itself is the title now, and the raw ISO day string used to go
+    here, which read like a database export on screen.
+    """
     parts = []
-    if cp.chapter.start:
-        parts.append(day_index(cp.chapter.start))
-    if ctx.span_seconds > 0:
+    if cp.place_label:
+        parts.append(cp.place_label)
+    if cp.items:
         parts.append(f"{len(cp.items)} shots")
+    if cp.chapter.start:
+        t = datetime.fromtimestamp(cp.chapter.start, tz=timezone.utc)
+        parts.append(t.strftime("%H:%M"))
     return "  ·  ".join(parts)

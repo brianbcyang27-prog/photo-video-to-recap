@@ -244,7 +244,22 @@ def main() -> int:
     check(ok_titles == len(titles),
           f"title cards with legible text: {ok_titles}/{len(titles)}")
 
-    # ---- Ken Burns: stills must actually move, but smoothly
+    # ---- Ken Burns: stills must actually move, and move continuously.
+    #
+    # The obvious version of this test - "is the difference between two frames
+    # small?" - cannot work, because that difference grows with how much detail
+    # the photo has. A busy 12MP iPhone frame differs from itself far more
+    # under a slow, perfectly smooth pan than a flat synthetic test image does,
+    # so any fixed allowance tuned on one library fails on the other. The first
+    # version of this check did exactly that and reported 4/7 on real photos
+    # that were moving correctly.
+    #
+    # What actually distinguishes a smooth move from a cut is not how far the
+    # image travels but whether the travel is *evenly* distributed over time. A
+    # pan advances a similar amount every step; a cut hidden inside a shot
+    # shows one step vastly larger than the rest. So this measures the shape of
+    # the per-step displacement and looks for an outlier, which is independent
+    # of scene detail.
     stills = [e for e in entries if e["type"] == "photo"]
     moved = 0
     smooth = 0
@@ -259,9 +274,22 @@ def main() -> int:
         diff = float(np.abs(f0 - f1).mean())
         if diff > 0.4:
             moved += 1
-            # A long shot pans further across its span, so the allowance has to
-            # scale with duration or every 4s clip reads as a hard cut.
-            if diff < 8.0 + 12.0 * dur:
+            # Sample the interior only. Including t=dur lands on the boundary
+            # with the next shot, so the final step measures that cut rather
+            # than this shot's motion - which reads as a huge spike at the end
+            # of every single still and made all of them look broken.
+            n = 8
+            frames = [grab_small(video, e["start"] + dur * (0.04 + 0.92 * i / n),
+                                 w=256).astype(np.float32) for i in range(n + 1)]
+            if any(f.shape != frames[0].shape for f in frames):
+                continue
+            steps = [float(np.abs(frames[i + 1] - frames[i]).mean())
+                     for i in range(n)]
+            med = float(np.median(steps))
+            # Eased motion legitimately has its fastest step in the middle,
+            # about 2.5x the median for this curve, so the outlier bar sits
+            # above that. A cut is an order of magnitude larger.
+            if max(steps) < max(6.0 * med, 3.0):
                 smooth += 1
     check(moved > 0, f"stills with motion (of {min(14, len(stills))} sampled): {moved}")
     check(smooth >= max(1, moved - 1),

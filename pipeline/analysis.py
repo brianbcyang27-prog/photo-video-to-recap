@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,7 +19,7 @@ from PIL import Image
 from .config import Analysis
 from .ingest import Library
 from .quality import FrameMetrics, dhash, load_image, measure
-from .util import MediaInfo, ToolError, default_jobs, log
+from .util import MediaInfo, ToolError, default_jobs, human_duration, log
 
 # Calibration constants, derived from typical phone-camera output measured
 # at the shared analysis resolution (see Analysis.analysis_long_side).
@@ -331,10 +332,25 @@ def analyse_library(lib: Library, cfg: Analysis) -> list[Item]:
                 if done % 50 == 0 or done == len(lib.photos):
                     log(f"  photos {done}/{len(lib.photos)}")
 
-    for i, info in enumerate(lib.videos):
-        log(f"analysing video {i + 1}/{len(lib.videos)}: {info.path.name} "
-            f"({info.duration:.1f}s)")
-        items.extend(analyse_video(info, cfg))
+    if lib.videos:
+        log(f"analysing {len(lib.videos)} videos with {jobs} workers")
+        done = 0
+        t0 = time.time()
+        # Parallel for the same reason photos are: each clip is an independent
+        # ffmpeg decode in a subprocess, so the GIL is released for nearly the
+        # whole of it and threads scale. A real trip library holds thousands of
+        # clips, and doing them one at a time put a 4,750-clip library at ~50
+        # minutes of decoding before selection even started.
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            futures = [pool.submit(analyse_video, info, cfg) for info in lib.videos]
+            for fut in as_completed(futures):
+                items.extend(fut.result())
+                done += 1
+                if done % 25 == 0 or done == len(lib.videos):
+                    rate = done / max(1e-6, time.time() - t0)
+                    left = (len(lib.videos) - done) / max(1e-6, rate)
+                    log(f"  videos {done}/{len(lib.videos)}"
+                        f"  ({rate:.0f}/s, ~{human_duration(left)} left)")
 
     for it in items:
         if it.kind == "photo":

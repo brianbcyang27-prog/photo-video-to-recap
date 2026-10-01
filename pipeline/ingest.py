@@ -13,6 +13,7 @@ from pathlib import Path
 from .config import AUDIO_EXT, PHOTO_EXT, VIDEO_EXT, Pipeline
 from .util import (
     MediaInfo, PipelineError, ToolError, exiftool_metadata, log, parse_exif_datetime,
+    parse_utc_offset,
     _gps, probe,
 )
 
@@ -137,6 +138,17 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
     meta = exiftool_metadata(photo_paths + video_paths)
     if meta:
         log(f"read EXIF for {len(meta)} files")
+        # Cameras record the UTC offset on photos and usually not on video, so
+        # this is routinely a minority. Worth knowing: a file without one has
+        # its wall clock read as UTC, which can put a late-night shot on the
+        # wrong calendar day and split a chapter in two.
+        withoff = sum(1 for r in meta.values()
+                      if parse_utc_offset(r.get("OffsetTimeOriginal"))
+                      or parse_utc_offset(r.get("OffsetTimeDigitized"))
+                      or parse_utc_offset(r.get("OffsetTime")))
+        if withoff < len(meta):
+            log(f"{len(meta) - withoff} of {len(meta)} files record no UTC "
+                f"offset; their times are read as UTC")
     else:
         log("no EXIF available; falling back to file modified times", level="warn")
 
@@ -144,11 +156,19 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
 
     def finish(info: MediaInfo) -> MediaInfo:
         row = meta.get(str(info.path.resolve())) or {}
+        # Prefer the offset recorded with the frame; fall back to any offset the
+        # file carries, and finally to UTC for cameras that record neither.
+        info.utc_offset = (
+            parse_utc_offset(row.get("OffsetTimeOriginal"))
+            or parse_utc_offset(row.get("OffsetTimeDigitized"))
+            or parse_utc_offset(row.get("OffsetTime"))
+        )
+        off = info.utc_offset
         info.captured = (
-            parse_exif_datetime(row.get("DateTimeOriginal"))
-            or parse_exif_datetime(row.get("CreateDate"))
-            or parse_exif_datetime(row.get("MediaCreateDate"))
-            or parse_exif_datetime(row.get("TrackCreateDate"))
+            parse_exif_datetime(row.get("DateTimeOriginal"), off)
+            or parse_exif_datetime(row.get("CreateDate"), off)
+            or parse_exif_datetime(row.get("MediaCreateDate"), off)
+            or parse_exif_datetime(row.get("TrackCreateDate"), off)
         )
         if info.captured:
             info.captured_source = "exif"
@@ -212,8 +232,55 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
     # Chronological is the default backbone of the final edit.
     lib.photos.sort(key=lambda i: (i.captured, i.path.name))
     lib.videos.sort(key=lambda i: (i.captured, i.path.name))
+    _borrow_offsets(lib)
     _report_skips(lib)
     return lib
+
+
+def _borrow_offsets(lib: Library) -> None:
+    """Give files that record no UTC offset the one their neighbours used.
+
+    iPhones write OffsetTimeOriginal onto stills and leave it off video, so in a
+    real library roughly half the files have no offset of their own. Reading
+    those as UTC is not a small error: a clip shot at 00:30 in Zermatt is
+    stamped two hours late and lands on the previous calendar day, which splits
+    a chapter and starts the next one at the wrong hour.
+
+    Borrowing from the nearest file that does record one keeps a trip's
+    timezone changes intact - an England morning next to a Swiss afternoon
+    keeps its own +01:00 or +02:00 - because the neighbour is from the same
+    place and the same day, not from whatever offset dominates the library.
+    """
+    timed = sorted((i for i in lib.items if i.captured), key=lambda i: i.captured)
+    if not timed:
+        return
+    known = [i for i in timed if i.utc_offset]
+    if not known:
+        return
+    filled = 0
+    for info in timed:
+        if info.utc_offset:
+            continue
+        best = min(known, key=lambda k: abs(k.captured - info.captured))
+        # Only trust a neighbour taken within a few hours: someone flying
+        # across the Atlantic mid-trip really did change timezone, and a
+        # distant borrow would silently apply the wrong one.
+        if abs(best.captured - info.captured) > 6 * 3600:
+            continue
+        # The timestamp itself has to move, not just the offset we report. A
+        # file with no offset was read as UTC, so its stored time is really a
+        # wall clock. Recording the offset and leaving the number alone would
+        # still put it two hours from a photo taken in the same minute, and
+        # sorting by capture time would interleave the two files wrongly.
+        info.captured -= best.utc_offset
+        info.utc_offset = best.utc_offset
+        filled += 1
+    if filled:
+        log(f"borrowed the UTC offset from nearby files for {filled} "
+            f"file(s) that record none")
+    # Sorting again: the correction moves files across each other.
+    lib.photos.sort(key=lambda i: (i.captured, i.path.name))
+    lib.videos.sort(key=lambda i: (i.captured, i.path.name))
 
 
 def _report_skips(lib: Library, limit: int = 8) -> None:

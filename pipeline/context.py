@@ -7,7 +7,7 @@ order files happened to be written in.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import math
 from pathlib import Path
 
@@ -30,6 +30,9 @@ class ChapterPlan:
     weight: float = 0.0        # relative share of the timeline
     seconds: float = 0.0       # assigned screen time
     title: str = ""
+    # Where this chapter happened. Kept apart from the title so the card can
+    # show "Mon Jun 15" up top and "Zermatt" underneath.
+    place_label: str = ""
 
     @property
     def label(self) -> str:
@@ -72,16 +75,26 @@ def _entries(lib: Library) -> list[tuple[float, float, float]]:
     return out
 
 
+def _offsets(lib: Library) -> dict[float, int]:
+    """ts -> utc_offset, so day boundaries follow the camera's own clock."""
+    return {i.captured: i.utc_offset
+            for i in lib.items if i.captured and i.utc_offset}
+
+
+def local_day(ts: float, offsets: dict[float, int]) -> date:
+    return datetime.fromtimestamp(
+        ts + offsets.get(ts, 0), tz=timezone.utc).date()
+
+
 def build_context(lib: Library, cfg: Pipeline, cache_dir: Path,
                   *, geocode: bool = True) -> TripContext:
     entries = _entries(lib)
+    offsets = _offsets(lib)
     ctx = TripContext()
 
     if entries:
         ctx.span_seconds = max(e[2] for e in entries) - min(e[2] for e in entries)
-        ctx.day_count = len({
-            datetime.fromtimestamp(e[2], tz=timezone.utc).date() for e in entries
-        })
+        ctx.day_count = len({local_day(e[2], offsets) for e in entries})
 
     ctx.has_gps = any(e[0] or e[1] for e in entries)
     if not ctx.has_gps:
@@ -99,10 +112,17 @@ def build_context(lib: Library, cfg: Pipeline, cache_dir: Path,
             log("place names unavailable (offline?) - using coordinates",
                 level="warn")
 
-    chapters = build_chapters(entries, ctx.stops) if entries else []
+    chapters = (build_chapters(entries, ctx.stops, offsets=offsets,
+                               split_on_move=cfg.chapter_on_move)
+               if entries else [])
     ctx.chapters = [ChapterPlan(chapter=c) for c in chapters]
+    # Date-led editing: the card leads with the day, and the place it was spent
+    # in becomes the subtitle. A chapter that spans two towns names both, since
+    # splitting on distance is off in this mode.
     for cp in ctx.chapters:
-        cp.title = cp.chapter.stop.label if cp.chapter.stop else cp.chapter.day_label
+        cp.title = cp.chapter.day_label
+        if cp.chapter.stop:
+            cp.place_label = cp.chapter.stop.label
 
     # Attach items to chapters.
     for item in _items_of(lib, cfg):
