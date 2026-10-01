@@ -31,6 +31,11 @@ class Entry:
     # item's own start"; it differs when a shot is slid earlier to give the
     # assigned duration room to fit.
     in_point: float = -1.0
+    # A second photo shown alongside this one, filling the other half of the
+    # frame. Set by pair_portrait_photos(); when present this entry's duration
+    # covers both shots and both must be photos (so the pair is silent either
+    # way and the audio track needs no special case).
+    pair: "Item | None" = None
     # Populated during rendering.
     motion: str = "in"
     rank_reason: str = ""
@@ -527,6 +532,49 @@ def assign_timing(entries: list[Entry], total_seconds: float,
         prev_frame = frame
 
 
+def _is_portrait_photo(e: Entry) -> bool:
+    if e.is_title or e.item is None or e.item.kind != "photo":
+        return False
+    w, h = e.item.info.display_size
+    return h > w
+
+
+def pair_portrait_photos(entries: list[Entry],
+                         cfg: Pipeline) -> list[Entry]:
+    """Show runs of portrait stills as two-up spreads instead of one at a time.
+
+    Merging rather than doubling up is the point: pairing by *overlap* would
+    show the second photo twice in a row, once small and once large, and on a
+    10-minute film with ~54 pairs that is 54 photos visibly repeated.
+
+    Merging keeps everything that is checked intact. Both durations are whole
+    numbers of frames cut on the beat grid, so their sum is too, and the
+    timeline's total length is unchanged - the pair simply occupies one slot
+    where two used to be. A portrait shot left over without a partner still
+    gets the blur treatment on its own.
+    """
+    out: list[Entry] = []
+    i = 0
+    paired = 0
+    while i < len(entries):
+        e = entries[i]
+        nxt = entries[i + 1] if i + 1 < len(entries) else None
+        if (nxt is not None and _is_portrait_photo(e)
+                and _is_portrait_photo(nxt)):
+            e.pair = nxt.item
+            e.duration = round(e.duration + nxt.duration, 3)
+            e.beats += nxt.beats
+            paired += 1
+            out.append(e)
+            i += 2
+            continue
+        out.append(e)
+        i += 1
+    if paired:
+        log(f"two-up: {paired} portrait pairs shown side by side")
+    return out
+
+
 def apply_hook_order(entries: list[Entry]) -> list[str]:
     """Move the single strongest shot to the front, keep the rest chronological."""
     content = [e for e in entries if not e.is_title]
@@ -693,6 +741,8 @@ def build_cutlist(items: list[Item], ctx: TripContext, cfg: Pipeline,
     if slid:
         notes.append(f"slid {slid} clip in-points earlier so they keep their full length")
 
+    if cfg.render.two_up:
+        entries = pair_portrait_photos(entries, cfg)
     cut = CutList(entries=entries, target=target, music=music, notes=notes)
     drift = cut.duration - target
     if abs(drift) > 1.0:

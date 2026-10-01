@@ -42,6 +42,14 @@ class Render:
     # costing real content. 4:3 lands at 0.75 and square at 0.56, so 0.70
     # separates them with margin rather than sitting exactly on the boundary.
     fit_crop_min_aspect: float = 0.70
+    # Show two portrait photos side by side rather than one at a time with
+    # blurred sides. This library turned out to be 108 portrait photos out of
+    # 141, so the single-photo treatment put bars down both edges of three
+    # quarters of the film; a spread halves the waste and reads as a photo
+    # album rather than as a video that could not decide what shape it was.
+    # Only stills pair with stills, so a pair is silent either way and the
+    # audio track needs no special case.
+    two_up: bool = True
     crf: int = 18
     preset: str = "veryfast"
     audio_bitrate: str = "192k"

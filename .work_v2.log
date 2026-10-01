@@ -7,3 +7,160 @@
 [pipeline] [ 105.7s]  info read EXIF for 12193 files
 [pipeline] [ 105.8s]  info 5223 of 12193 files record no UTC offset; their times are read as UTC
 [pipeline] [ 105.8s]  info probing 12193 files with 8 workers
+[pipeline] [ 426.5s]  info borrowed the UTC offset from nearby files for 5199 file(s) that record none
+[pipeline] [ 426.5s] warn    skipped IMG_0089.mov: not a readable MOV file (1048576 bytes) - truncated or the wrong extension
+[pipeline] [ 426.5s] warn    skipped IMG_1450 (1).mov: too small or too short
+[pipeline] [ 426.5s] warn    skipped IMG_1484.MOV: too small or too short
+[pipeline] [ 426.5s] warn    skipped IMG_1794.MOV: too small or too short
+[pipeline] [ 426.5s] warn    skipped IMG_2060 (1).mov: too small or too short
+[pipeline] [ 426.5s] warn    skipped IMG_2098 (1).mov: too small or too short
+[pipeline] [ 426.5s] warn    skipped IMG_2188.mov: too small or too short
+[pipeline] [ 426.5s] warn    skipped IMG_2296.mov: too small or too short
+[pipeline] [ 426.5s] warn    ... and 14 more skipped file(s); the full list is in the report
+[pipeline] [ 426.5s] warn  1 file(s) look damaged - re-copy them from the original device to recover them
+[pipeline] [ 426.5s]  info       6972 photos, 5199 videos, 0 audio, 22 skipped
+[pipeline] [ 426.5s]  info 
+[pipeline] [ 426.5s]  info [2/7] scoring every shot
+[pipeline] [ 426.5s]  info analysis cache: 81 usable entries, 0 discarded
+[pipeline] [ 426.5s]  info scoring 6972 photos with 8 workers
+[pipeline] [ 428.5s]  info   photos 50/6972
+[pipeline] [ 430.4s]  info   photos 100/6972
+[pipeline] [ 432.6s]  info   photos 150/6972
+[pipeline] [ 434.9s]  info   photos 200/6972
+[pipeline] [ 437.6s]  info   photos 250/6972
+[pipeline] [ 439.4s]  info   photos 300/6972
+[pipeline] [ 440.3s]  info   photos 350/6972
+[pipeline] [ 441.9s]  info   photos 400/6972
+[pipeline] [ 444.3s]  info   photos 450/6972
+[pipeline] [ 446.5s]  info   photos 500/6972
+[pipeline] [ 447.4s]  info   photos 550/6972
+[pipeline] [ 449.2s]  info   photos 600/6972
+[pipeline] [ 450.2s]  info   photos 650/6972
+[pipeline] [ 451.7s]  info   photos 700/6972
+[pipeline] [ 453.1s]  info   photos 750/6972
+[pipeline] [ 454.2s]  info   photos 800/6972
+[pipeline] [ 456.6s]  info   photos 850/6972
+[pipeline] [ 458.9s]  info   photos 900/6972
+[pipeline] [ 461.1s]  info   photos 950/6972
+[pipeline] [ 463.3s]  info   photos 1000/6972
+[pipeline] [ 465.6s]  info   photos 1050/6972
+[pipeline] [ 467.9s]  info   photos 1100/6972
+[pipeline] [ 470.2s]  info   photos 1150/6972
+[pipeline] [ 472.4s]  info   photos 1200/6972
+[pipeline] [ 474.9s]  info   photos 1250/6972
+[pipeline] [ 477.0s]  info   photos 1300/6972
+[pipeline] [ 479.4s]  info   photos 1350/6972
+[pipeline] [ 481.4s]  info   photos 1400/6972
+[pipeline] [ 483.7s]  info   photos 1450/6972
+[pipeline] [ 486.2s]  info   photos 1500/6972
+[pipeline] [ 488.3s]  info   photos 1550/6972
+[pipeline] [ 490.6s]  info   photos 1600/6972
+[pipeline] [ 493.0s]  info   photos 1650/6972
+[pipeline] [ 495.2s]  info   photos 1700/6972
+[pipeline] [ 496.7s]  info   photos 1750/6972
+[pipeline] [ 497.9s]  info   photos 1800/6972
+[pipeline] [ 499.0s]  info   photos 1850/6972
+[pipeline] [ 499.9s]  info   photos 1900/6972
+[pipeline] [ 500.9s]  info   photos 1950/6972
+[pipeline] [ 502.6s]  info   photos 2000/6972
+[pipeline] [ 505.1s]  info   photos 2050/6972
+[pipeline] [ 507.6s]  info   photos 2100/6972
+[pipeline] [ 510.0s]  info   photos 2150/6972
+[pipeline] [ 512.3s]  info   photos 2200/6972
+[pipeline] [ 514.9s]  info   photos 2250/6972
+[pipeline] [ 517.1s]  info   photos 2300/6972
+[pipeline] [ 519.3s]  info   photos 2350/6972
+[pipeline] [ 521.6s]  info   photos 2400/6972
+[pipeline] [ 524.0s]  info   photos 2450/6972
+[pipeline] [ 526.3s]  info   photos 2500/6972
+[pipeline] [ 528.6s]  info   photos 2550/6972
+[pipeline] [ 530.9s]  info   photos 2600/6972
+[pipeline] [ 531.9s]  info   photos 2650/6972
+[pipeline] [ 534.3s]  info   photos 2700/6972
+[pipeline] [ 537.0s]  info   photos 2750/6972
+[pipeline] [ 539.5s]  info   photos 2800/6972
+[pipeline] [ 541.8s]  info   photos 2850/6972
+[pipeline] [ 544.2s]  info   photos 2900/6972
+[pipeline] [ 547.0s]  info   photos 2950/6972
+[pipeline] [ 549.5s]  info   photos 3000/6972
+[pipeline] [ 551.9s]  info   photos 3050/6972
+[pipeline] [ 554.2s]  info   photos 3100/6972
+[pipeline] [ 556.5s]  info   photos 3150/6972
+[pipeline] [ 558.9s]  info   photos 3200/6972
+[pipeline] [ 561.6s]  info   photos 3250/6972
+[pipeline] [ 563.9s]  info   photos 3300/6972
+[pipeline] [ 566.5s]  info   photos 3350/6972
+[pipeline] [ 569.0s]  info   photos 3400/6972
+[pipeline] [ 571.3s]  info   photos 3450/6972
+[pipeline] [ 574.0s]  info   photos 3500/6972
+[pipeline] [ 576.5s]  info   photos 3550/6972
+[pipeline] [ 579.5s]  info   photos 3600/6972
+[pipeline] [ 582.0s]  info   photos 3650/6972
+[pipeline] [ 584.6s]  info   photos 3700/6972
+[pipeline] [ 587.2s]  info   photos 3750/6972
+[pipeline] [ 590.2s]  info   photos 3800/6972
+[pipeline] [ 592.7s]  info   photos 3850/6972
+[pipeline] [ 595.2s]  info   photos 3900/6972
+[pipeline] [ 597.6s]  info   photos 3950/6972
+[pipeline] [ 599.9s]  info   photos 4000/6972
+[pipeline] [ 601.6s]  info   photos 4050/6972
+[pipeline] [ 604.0s]  info   photos 4100/6972
+[pipeline] [ 606.6s]  info   photos 4150/6972
+[pipeline] [ 609.0s]  info   photos 4200/6972
+[pipeline] [ 611.5s]  info   photos 4250/6972
+[pipeline] [ 614.1s]  info   photos 4300/6972
+[pipeline] [ 616.7s]  info   photos 4350/6972
+[pipeline] [ 619.4s]  info   photos 4400/6972
+[pipeline] [ 622.0s]  info   photos 4450/6972
+[pipeline] [ 624.4s]  info   photos 4500/6972
+[pipeline] [ 627.2s]  info   photos 4550/6972
+[pipeline] [ 629.9s]  info   photos 4600/6972
+[pipeline] [ 632.3s]  info   photos 4650/6972
+[pipeline] [ 633.8s]  info   photos 4700/6972
+[pipeline] [ 634.8s]  info   photos 4750/6972
+[pipeline] [ 637.7s]  info   photos 4800/6972
+[pipeline] [ 640.5s]  info   photos 4850/6972
+[pipeline] [ 641.8s]  info   photos 4900/6972
+[pipeline] [ 643.2s]  info   photos 4950/6972
+[pipeline] [ 645.5s]  info   photos 5000/6972
+[pipeline] [ 647.8s]  info   photos 5050/6972
+[pipeline] [ 650.4s]  info   photos 5100/6972
+[pipeline] [ 652.8s]  info   photos 5150/6972
+[pipeline] [ 655.0s]  info   photos 5200/6972
+[pipeline] [ 657.2s]  info   photos 5250/6972
+[pipeline] [ 659.5s]  info   photos 5300/6972
+[pipeline] [ 661.8s]  info   photos 5350/6972
+[pipeline] [ 664.3s]  info   photos 5400/6972
+[pipeline] [ 666.8s]  info   photos 5450/6972
+[pipeline] [ 669.3s]  info   photos 5500/6972
+[pipeline] [ 671.8s]  info   photos 5550/6972
+[pipeline] [ 674.3s]  info   photos 5600/6972
+[pipeline] [ 677.0s]  info   photos 5650/6972
+[pipeline] [ 679.4s]  info   photos 5700/6972
+[pipeline] [ 682.0s]  info   photos 5750/6972
+[pipeline] [ 684.8s]  info   photos 5800/6972
+[pipeline] [ 687.1s]  info   photos 5850/6972
+[pipeline] [ 689.8s]  info   photos 5900/6972
+[pipeline] [ 692.3s]  info   photos 5950/6972
+[pipeline] [ 694.7s]  info   photos 6000/6972
+[pipeline] [ 697.2s]  info   photos 6050/6972
+[pipeline] [ 699.6s]  info   photos 6100/6972
+[pipeline] [ 702.0s]  info   photos 6150/6972
+[pipeline] [ 704.4s]  info   photos 6200/6972
+[pipeline] [ 707.1s]  info   photos 6250/6972
+[pipeline] [ 710.2s]  info   photos 6300/6972
+[pipeline] [ 713.1s]  info   photos 6350/6972
+[pipeline] [ 715.6s]  info   photos 6400/6972
+[pipeline] [ 718.1s]  info   photos 6450/6972
+[pipeline] [ 721.0s]  info   photos 6500/6972
+[pipeline] [ 723.8s]  info   photos 6550/6972
+[pipeline] [ 726.6s]  info   photos 6600/6972
+[pipeline] [ 729.3s]  info   photos 6650/6972
+[pipeline] [ 731.9s]  info   photos 6700/6972
+[pipeline] [ 734.8s]  info   photos 6750/6972
+[pipeline] [ 737.8s]  info   photos 6800/6972
+[pipeline] [ 740.4s]  info   photos 6850/6972
+[pipeline] [ 742.9s]  info   photos 6900/6972
+[pipeline] [ 745.5s]  info   photos 6950/6972
+[pipeline] [ 746.4s]  info   photos 6972/6972
+[pipeline] [ 746.4s]  info analysing 5199 videos with 8 workers

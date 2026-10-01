@@ -91,6 +91,26 @@ def fit_for(aspect: float, cfg: Pipeline) -> str:
     return "crop" if aspect >= frame * cfg.render.fit_crop_min_aspect else "blur"
 
 
+def compose_pair(left: Image.Image, right: Image.Image,
+                 w: int, h: int) -> Image.Image:
+    """Two photos side by side, filling a w x h frame between them.
+
+    Each half gets the same treatment a lone portrait shot would - fitted to
+    the half without being cropped, over a blurred copy of itself - so a spread
+    reads as a photo album rather than as two photos floating in a void. The
+    gap between them is a hairline rather than a fat border, so the pair still
+    looks like one frame.
+    """
+    gap = max(2, w // 320)
+    half = (w - gap) // 2
+    a = compose(left, half, h, "blur")
+    b = compose(right, w - gap - half, h, "blur")
+    canvas = Image.new("RGB", (w, h), (0, 0, 0))
+    canvas.paste(a, (0, 0))
+    canvas.paste(b, (half + gap, 0))
+    return canvas
+
+
 def compose(img: Image.Image, w: int, h: int, fit: str = "blur") -> Image.Image:
     """Normalise any aspect ratio into exactly w x h without losing content."""
     if fit == "crop":
@@ -605,6 +625,14 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
             # Decided from the pixels just loaded, not from metadata: ffprobe
             # reports a HEIC's embedded thumbnail, so a 4032x3024 photo arrives
             # claiming to be 512x512 and would be treated as portrait.
+            if e.pair is not None:
+                other = _load_source(Entry(item=e.pair, duration=e.duration),
+                                     cfg, sw)
+                if other is not None:
+                    canvas = compose_pair(src, other, sw, sh)
+                    canvas.save(target)
+                    frame_for[i] = target
+                    continue
             canvas = compose(src, sw, sh,
                              fit_for(src.width / max(1, src.height), cfg))
             canvas.save(target)

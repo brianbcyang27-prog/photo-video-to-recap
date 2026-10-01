@@ -190,6 +190,13 @@ def _small(a: np.ndarray, n: int = 64) -> np.ndarray:
                       dtype=np.float32)
 
 
+# Detail floor for a two-up half, measured rather than guessed. A correct
+# spread bottomed out at 0.944; a deliberately broken one, where the
+# second photo was replaced by a blurred copy of the first, fell to
+# 0.444. 0.65 sits between the two with ~2x margin either side.
+SHARP = 0.65
+
+
 def _check_rotation(video: Path, entries: list[dict], check) -> None:
     """Photos must appear the way up the camera recorded them.
 
@@ -239,6 +246,39 @@ def _check_rotation(video: Path, entries: list[dict], check) -> None:
         check(bad == 0,
               f"quarter-turned photos shown upright, not on their side: "
               f"{good}/{tested} ({bad} sideways)")
+
+
+def _check_two_up(video: Path, entries: list[dict], check) -> None:
+    """A two-up spread has to show two photos, not one photo and an empty half.
+
+    Both halves are measured for detail. A lone portrait shot with blur-fill
+    puts a heavily smoothed copy of itself down the sides, so those halves come
+    back with very little high-frequency energy; a real photo on each side does
+    not. This is the check that would notice the second half silently going
+    missing, which is exactly the shape of the bug that a length or a
+    loudness measurement cannot see.
+    """
+    tested = sharp = 0
+    worst = 1e9
+    for e in entries:
+        if e["type"] != "photo" or not e.get("pair"):
+            continue
+        if tested >= 8:
+            break
+        g = luma(grab(video, e["start"] + min(0.4, e["duration"] / 2)))
+        if g.shape[0] < 100:
+            continue
+        h, w = g.shape
+        left = highfreq(g[:, int(w * 0.06):int(w * 0.42)])
+        right = highfreq(g[:, int(w * 0.58):int(w * 0.94)])
+        tested += 1
+        worst = min(worst, left, right)
+        if left >= SHARP and right >= SHARP:
+            sharp += 1
+    if tested:
+        check(sharp == tested,
+              f"two-up spreads show a sharp photo in both halves: "
+              f"{sharp}/{tested} (weakest half {worst:.3f}, floor {SHARP:.2f})")
 
 
 def highfreq(gray: np.ndarray) -> float:
@@ -500,6 +540,8 @@ def main() -> int:
     for e in entries:
         if e["type"] != "photo" or not e.get("source"):
             continue
+        if e.get("pair"):
+            continue        # a two-up spread: both halves are sharp by design
         src = Path(e["source"])
         if not src.exists():
             continue
@@ -563,6 +605,7 @@ def main() -> int:
     # ---- native audio: loudness, continuity, and whether ducking happened
     _check_audio(video, entries, edl, check)
     _check_rotation(video, entries, check)
+    _check_two_up(video, entries, check)
 
     # ---- report
     print()

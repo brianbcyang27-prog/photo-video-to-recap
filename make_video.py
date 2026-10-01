@@ -63,6 +63,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     v = p.add_argument_group("look")
     v.add_argument("--fit", choices=["blur", "crop", "pad"], default="blur",
                    help="how shots that do not match the frame are arranged")
+    v.add_argument("--two-up", dest="two_up",
+                   action=argparse.BooleanOptionalAction, default=True,
+                   help="show portrait photos side by side in pairs instead "
+                        "of one at a time with blurred sides "
+                        "(--no-two-up gives each one the full frame)")
     v.add_argument("--fit-per-shot", dest="fit_per_shot",
                    action=argparse.BooleanOptionalAction, default=True,
                    help="arrange each shot on its own shape: landscape shots "
@@ -99,6 +104,7 @@ def cfg_from_args(a: argparse.Namespace) -> Pipeline:
         fps=a.fps,
         fit=a.fit,
         fit_per_shot=a.fit_per_shot,
+        two_up=a.two_up,
         crf=a.quality,
         ken_burns=not a.no_ken_burns,
         zoom_amount=a.zoom,

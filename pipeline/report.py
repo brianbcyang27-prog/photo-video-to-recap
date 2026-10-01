@@ -275,6 +275,7 @@ def build_report(lib: Library, items: list[Item], ctx: TripContext,
                 # meant the EDL said a title existed but not what it said -
                 # and my own analysis script crashed on the missing source.
                 "type": "title" if e.is_title else e.kind,
+                "pair": str(e.pair.info.path) if e.pair else None,
                 "title": e.title or None,
                 "subtitle": e.subtitle or None,
                 "source": str(e.item.info.path) if e.item else None,

@@ -294,7 +294,12 @@ def exiftool_metadata(paths: list[Path]) -> dict[str, dict]:
         # and the trip gets split in the wrong place.
         "OffsetTimeOriginal", "OffsetTime", "OffsetTimeDigitized",
         "GPSLatitude", "GPSLatitudeRef", "GPSLongitude", "GPSLongitudeRef",
-        "Make", "Model", "ImageWidth", "ImageHeight", "Rotation",
+        "Make", "Model", "ImageWidth", "ImageHeight",
+        # Orientation, not Rotation. Rotation is a derived column that reported
+        # 3 under -n for a photo whose Orientation was plainly 6, and asking
+        # for it here meant Orientation was never fetched at all - so a portrait
+        # shot's axes were never transposed and it was filed as landscape.
+        "Orientation",
     ]
     args = ["exiftool", "-json", "-n", "-charset", "filename=utf8"]
     for w in wanted:
