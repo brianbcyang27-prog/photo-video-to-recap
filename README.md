@@ -38,6 +38,8 @@ Useful options:
 | `--mood` | `uplifting`, `cinematic`, `calm`, `energetic`, `warm` |
 | `--order hook` | open on the strongest shot instead of chronologically |
 | `--fit` | `blur` (default, never crops), `crop`, `pad` |
+| `--no-two-up` | one photo at a time, instead of portrait photos in side-by-side pairs |
+| `--no-fit-per-shot` | use one `--fit` style for everything, instead of deciding per shot |
 | `--music-track FILE` | use your own track instead of a generated score |
 | `--title "..."` | your own text for the opening card |
 | `--dry-run` | make every decision and write the report, render nothing |
