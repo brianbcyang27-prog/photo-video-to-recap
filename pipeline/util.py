@@ -148,14 +148,11 @@ class MediaInfo:
         w, h = self.display_size
         return (w / h) if h else 0.0
 
-    @property
-    def orientation(self) -> str:
-        a = self.aspect
-        if a > 1.15:
-            return "landscape"
-        if a < 0.87:
-            return "portrait"
-        return "square"
+    # There used to be an `orientation` property here returning
+# "landscape"/"portrait"/"square". Nothing ever read it, which is why the
+# display-size bug it was meant to help with went unnoticed for so long. It is
+# gone rather than kept "for symmetry": a property nothing calls is a second
+# place for the answer to live, and the next reader would trust it.
 
 
 def _parse_fps(text: str | None) -> float:
