@@ -4,3 +4,6 @@
 [pipeline] [   0.2s]  info 
 [pipeline] [   0.2s]  info [1/7] reading your library
 [pipeline] [   0.5s]  info found 6972 photos, 5221 videos, 0 audio files
+[pipeline] [ 105.7s]  info read EXIF for 12193 files
+[pipeline] [ 105.8s]  info 5223 of 12193 files record no UTC offset; their times are read as UTC
+[pipeline] [ 105.8s]  info probing 12193 files with 8 workers

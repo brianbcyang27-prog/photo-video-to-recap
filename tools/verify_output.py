@@ -22,7 +22,9 @@ from PIL import Image
 # also readable here. Using PIL.Image.open directly makes the verifier crash
 # on exactly the files the pipeline handled fine.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pipeline.quality import load_image  # noqa: E402
+from pipeline.quality import (  # noqa: E402
+    _load_via_sips, exif_orientation, load_image,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -175,6 +177,68 @@ def _check_audio(video: Path, entries: list[dict], edl: dict, check) -> None:
               f"music ducks under native audio: quiet moments inside clips sit "
               f"{drop:.1f} dB below the bed under stills "
               f"({db(g):.0f} dBFS vs {db(b):.0f} dBFS)")
+
+
+def _norm(a: np.ndarray) -> np.ndarray:
+    """Zero-mean, unit-variance, so brightness cannot decide a match."""
+    a = a.astype(np.float32)
+    return (a - a.mean()) / (a.std() + 1e-6)
+
+
+def _small(a: np.ndarray, n: int = 64) -> np.ndarray:
+    return np.asarray(Image.fromarray(a.astype(np.uint8)).resize((n, n), Image.LANCZOS),
+                      dtype=np.float32)
+
+
+def _check_rotation(video: Path, entries: list[dict], check) -> None:
+    """Photos must appear the way up the camera recorded them.
+
+    The finished edit shipped with 106 of its 141 photos lying on their side
+    and every other check still passed. Nothing about a sideways photo is
+    detectably wrong to a luma, edge or loudness measurement - it is simply the
+    wrong picture - so nothing here could have noticed.
+
+    So this compares the frame actually on screen against both hypotheses for
+    the source: the orientation the camera recorded, and the pixels as stored,
+    which for a quarter-turn is exactly the other way round. The recorded one
+    has to match better.
+    """
+    good = bad = tested = 0
+    for e in entries:
+        if tested >= 6:
+            break
+        if e["type"] != "photo" or not e.get("source"):
+            continue
+        src = Path(e["source"])
+        if not src.exists():
+            continue
+        try:
+            o = exif_orientation(src)
+        except Exception:
+            continue
+        if o < 5:                      # no quarter turn to confuse us with
+            continue
+        upright = load_image(src)
+        stored = _load_via_sips(src)
+        if upright is None or stored is None:
+            continue
+        frame = luma(grab(video, e["start"] + min(0.4, e["duration"] / 2)))
+        if frame.shape[0] < 100:
+            continue
+        h, w = frame.shape
+        band = _norm(_small(frame[int(h * 0.15):int(h * 0.85),
+                                int(w * 0.30):int(w * 0.70)]))
+        su = _norm(_small(np.asarray(upright.convert("L"))))
+        ss = _norm(_small(np.asarray(stored.convert("L"))))
+        tested += 1
+        if float((band * su).mean()) > float((band * ss).mean()):
+            good += 1
+        else:
+            bad += 1
+    if tested:
+        check(bad == 0,
+              f"quarter-turned photos shown upright, not on their side: "
+              f"{good}/{tested} ({bad} sideways)")
 
 
 def highfreq(gray: np.ndarray) -> float:
@@ -498,6 +562,7 @@ def main() -> int:
 
     # ---- native audio: loudness, continuity, and whether ducking happened
     _check_audio(video, entries, edl, check)
+    _check_rotation(video, entries, check)
 
     # ---- report
     print()

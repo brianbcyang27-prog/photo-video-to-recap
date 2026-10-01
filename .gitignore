@@ -13,6 +13,7 @@ out/
 #   .venv/bin/python tools/make_audio_library.py
 test_media/
 test_media_audio/
+test_media_rot/
 
 # macOS
 .DS_Store
