@@ -329,11 +329,18 @@ def _gop() -> int:
 
 
 def render_still(png: Path, out_mp4: Path, cfg: Pipeline, duration: float,
-                 motion: str) -> None:
-    """Animate one still into a clip of the requested length."""
+                 motion: str, zoom: float | None = None) -> None:
+    """Animate one still into a clip of the requested length.
+
+    `zoom` overrides the configured amount for this shot only. It is how a 2s
+    stab moves further than a 6s drift without the caller having to rewrite
+    cfg.render.zoom_amount for every entry; None keeps the global default, so
+    every other call site is unaffected.
+    """
     frames = max(2, int(round(duration * FPS)))
+    amount = cfg.render.zoom_amount if zoom is None else zoom
     if cfg.render.ken_burns:
-        chain = _zoompan_expr(motion, cfg.render.zoom_amount, frames)
+        chain = _zoompan_expr(motion, amount, frames)
     else:
         chain = (f"scale={ZOOM_W}:{ZOOM_H}:force_original_aspect_ratio=increase,"
                  f"crop={ZOOM_W}:{ZOOM_H},setsar=1")
@@ -943,12 +950,13 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
         e = entries[idx]
         out = seg_dir / f"seg_{idx:05d}.mp4"
         if e.is_title:
-            render_still(frame_for[idx], out, cfg, e.duration, e.motion)
+            render_still(frame_for[idx], out, cfg, e.duration, e.motion, e.zoom)
         elif e.item.kind == "photo":
             if e.item.info.is_live:
                 render_live(e, cfg, out)
             else:
-                render_still(frame_for[idx], out, cfg, e.duration, e.motion)
+                render_still(frame_for[idx], out, cfg, e.duration, e.motion,
+                             e.zoom)
         else:
             render_video(e, cfg, out)
         return idx, out

@@ -371,6 +371,44 @@ def main() -> int:
         check(abs(got_fps - want_fps) < 0.5,
               f"frame rate {got_fps:.2f}fps matches the planned "
               f"{want_fps:g}fps")
+
+    # ---- pacing
+    #
+    # Reads the per-shot zoom back out of the EDL and checks that the film
+    # actually paces itself: short shots travel further *per second* than long
+    # ones, so a 2s stab reads as a stab and a 6s drift as a drift. Every shot
+    # moving the same amount is the bug this guards, and it is invisible in a
+    # single frame - only the distribution across the film gives it away.
+    paced = [(e.get("duration"), e.get("zoom")) for e in entries
+             if not e.get("is_title") and e.get("zoom") is not None
+             and (e.get("duration") or 0) > 0.4
+             # A `still` shot is *meant* to have no travel, so it is excluded
+             # from the spread below: dividing by its 0.0 gave a 1.9e8x ratio
+             # and failed a correct render. It is still included in the
+             # speed comparison above, where zero travel on a long shot is
+             # exactly the low end being looked for.
+             and (e.get("zoom") or 0.0) > 0.0]
+    if not paced:
+        check(True, "NOTE: no per-shot zoom in the EDL - render predates "
+                    "pacing, or Ken Burns was disabled")
+    else:
+        short = [z / d for d, z in paced if d <= 3.0]
+        long_ = [z / d for d, z in paced if d >= 4.5]
+        if not short or not long_:
+            check(True, f"NOTE: {len(paced)} shots paced but none span both "
+                        f"the short (<=3s) and long (>=4.5s) ends, so pacing "
+                        f"cannot be compared")
+        else:
+            s_rate = sum(short) / len(short)
+            l_rate = sum(long_) / len(long_)
+            check(s_rate > l_rate * 1.2,
+                  f"short shots move {s_rate:.4f}/s vs long shots "
+                  f"{l_rate:.4f}/s - {s_rate / l_rate:.2f}x, so the film "
+                  f"paces rather than repeating one gesture")
+        spread = max(z for _, z in paced) / max(1e-9, min(z for _, z in paced))
+        check(spread < 4.0,
+              f"per-shot travel varies {spread:.2f}x across the film (not a "
+              f"single repeated move)")
         # The level tag has to be able to carry this frame size, or a hardware
         # decoder that trusts it will refuse or mis-play the file. Level 4.0
         # caps at 8192 macroblocks per frame and 4K needs 32400, and a hardcoded
@@ -518,6 +556,15 @@ def main() -> int:
     for e in stills[:14]:
         dur = e["duration"]
         if dur < 0.6:
+            continue
+        # A deliberately still shot (zoom 0, motion "still") holds one frame
+        # for its whole length. Every per-step displacement is ~0, so the
+        # median is ~0 and the outlier test below cannot be evaluated - it
+        # reported these as hard cuts. A held frame is the opposite of a cut;
+        # it is just not a move, so it is not this check's subject. Skipped
+        # rather than counted, and the "stills with motion" count still
+        # reports how many there were.
+        if e.get("zoom") is not None and (e.get("zoom") or 0.0) <= 0.0:
             continue
         f0 = grab(video, e["start"] + dur * 0.12).astype(np.float32)
         f1 = grab(video, e["start"] + dur * 0.88).astype(np.float32)

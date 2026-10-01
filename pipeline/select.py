@@ -13,7 +13,7 @@ from .analysis import Item
 from .config import Pipeline
 from .context import TripContext, light_for
 from .music import MusicResult
-from .util import log
+from .util import clamp, log
 
 
 @dataclass
@@ -38,6 +38,10 @@ class Entry:
     pair: Item | None = None
     # Populated during rendering.
     motion: str = "in"
+    # How far this shot's move travels. None means "use the configured
+    # amount"; build_cutlist() sets it per shot so a 2s stab moves further than
+    # a 6s drift. See _zoom_for().
+    zoom: float | None = None
     rank_reason: str = ""
 
     @property
@@ -612,6 +616,100 @@ def _motion_for(index: int, total: int) -> str:
     return patterns[(index * 5 + index // n) % n]
 
 
+ZOOM_BASE_S = 4.0        # the shot length the configured amount was chosen for
+ZOOM_MIN, ZOOM_MAX = 0.045, 0.30
+
+
+def _zoom_for(index: int, duration: float, motion: str, base: float,
+              energy: float = 1.0) -> float:
+    """How far this particular shot should move, and how fast.
+
+    Every move used the same total zoom, so a 2-second stab pushed the frame as
+    far as a 6-second drift did. Those are not the same gesture: the stab reads
+    as a punch because the same distance covered in a third of the time is three
+    times the speed, and a viewer notices the difference even if they could not
+    name it. On a 600-second cut with a 2-6s range, that uniformity is most of
+    why the picture stops feeling deliberate partway in.
+
+    So the amount is scaled against shot length with a square-root law, not a
+    linear one. A linear law (amount proportional to duration) would make long
+    shots the aggressive ones, which is backwards. A square root is the
+    compromise that keeps the *ordering* right - short moves more per second
+    than long ones - while holding the spread to roughly 1.7x across a 2-6s
+    range instead of the 3x a linear law would give. Past that the pacing
+    starts reading as a mistake rather than as emphasis.
+
+    `energy` is the music section's relative loudness, 1.0 being the mean. A
+    peak pushes its shots out a little further, so the picture leans into the
+    music instead of sitting under it. It is bounded hard at both ends: a
+    crescendo should not send the frame past where Ken Burns stops reading as a
+    camera move and starts reading as a mistake.
+
+    Deterministic in (index, duration, motion): no RNG, so two runs over the same
+    library produce the same film, which is the property the whole test suite
+    relies on.
+    """
+    if motion == "still":
+        return 0.0
+    d = max(0.5, float(duration))
+    # Short shot -> more travel per second. Positive exponent on d/ZOOM_BASE_S
+    # would scale amount *up* with duration, so it is inverted deliberately.
+    scaled = base * (ZOOM_BASE_S / d) ** 0.5
+    # Break ties between same-length neighbours so a run of equal beats still
+    # varies. A cheap integer hash, not random(): the film has to be identical
+    # on every rerun.
+    jitter = 0.90 + 0.20 * ((index * 2654435761 >> 8) & 0xFF) / 255.0
+    energy_term = clamp(energy, 0.75, 1.35)
+    return clamp(scaled * jitter * energy_term, ZOOM_MIN, ZOOM_MAX)
+
+
+def _energy_curve(music, total: float) -> list[float]:
+    """Relative loudness of the arrangement across the whole film, 1.0 = mean.
+
+    Built from the same section plan the music itself is rendered from, so the
+    picture is reacting to the arrangement that is actually playing rather than
+    to a guess at it. A section's energy is the mean of its always-present layer
+    weights, normalised by the mean across all sections so a quiet film is not
+    systematically shrunk relative to a loud one.
+
+    Returned as a per-shot lookup: energy_at(t) interpolates this at time t.
+    """
+    from . import arrange
+
+    if music is None or music.bpm <= 1 or total <= 0:
+        return [1.0]
+    bar = max(0.1, music.bar_seconds)
+    n_bars = max(1, int(math.ceil(total / bar)))
+    # Reconstruct the same plan the generator used, so section boundaries line
+    # up with the audio. max_bars matches generate_music's cadence target.
+    plan_ = arrange.plan(n_bars, max_bars=max(2, int(90.0 / bar)))
+
+    raw: list[float] = []
+    for b in range(n_bars):
+        sec = arrange.section_at(plan_, b)
+        # Weight the layers by how audible they are: drums and bass carry the
+        # low end that reads as loudness, arp and pad are texture. A section
+        # that only swells the pad is a lift, not a peak.
+        raw.append(0.45 * sec.drums + 0.35 * sec.bass
+                   + 0.12 * sec.arp + 0.08 * sec.pad)
+    mean = sum(raw) / len(raw) if raw else 1.0
+    if mean <= 0:
+        return [1.0]
+    return [v / mean for v in raw]
+
+
+def _energy_at(curve: list[float], t: float, bar: float) -> float:
+    """Sample the energy curve at time `t`, clamping outside the film."""
+    if not curve:
+        return 1.0
+    idx = int(t / max(0.1, bar))
+    if idx < 0:
+        return curve[0]
+    if idx >= len(curve):
+        return curve[-1]
+    return curve[idx]
+
+
 def _source_available(item: Item) -> float:
     """Usable footage from this shot's own in-point, in seconds.
 
@@ -732,6 +830,27 @@ def build_cutlist(items: list[Item], ctx: TripContext, cfg: Pipeline,
 
     for i, e in enumerate(entries):
         e.motion = _motion_for(i, len(entries))
+
+    # Per-shot travel, set after durations are final and after two-up pairing so
+    # a paired shot is paced against the length it actually occupies. Title
+    # cards are excluded: a card holds a single frame, so its amount is
+    # meaningless, and _zoom_for would only hand it a number to discard.
+    #
+    # Each shot is also scored against the music section it lands in, so the
+    # picture leans into a crescendo instead of sitting at one fixed size under
+    # the whole piece. The clock here is the shot's own position on the
+    # timeline, which is what the viewer perceives - it is not the source
+    # clip's in-point, so a slide later does not move the shot's energy.
+    curve = _energy_curve(music, sum(e.duration for e in entries))
+    bar = music.bar_seconds if (music and music.bpm > 1) else 1.0
+    t_cursor = 0.0
+    for i, e in enumerate(entries):
+        e.zoom = None
+        if not e.is_title and e.duration > 0:
+            e.zoom = _zoom_for(i, e.duration, e.motion,
+                               cfg.render.zoom_amount,
+                               _energy_at(curve, t_cursor, bar))
+        t_cursor += e.duration
 
     # Slide each clip's in-point earlier where the footage allows, so a shot
     # can keep its whole-beat duration instead of being trimmed. Trimming to

@@ -43,6 +43,12 @@ class MusicResult:
     def seconds_per_beat(self) -> float:
         return 60.0 / self.bpm if self.bpm > 0 else 1.0
 
+    @property
+    def bar_seconds(self) -> float:
+        """Length of one 4/4 bar, i.e. four beats. The unit arrange.plan
+        sections are measured in."""
+        return self.seconds_per_beat * 4.0
+
     def beats_in(self, start: float, end: float) -> list[float]:
         return [b for b in self.beat_times if start <= b < end]
 

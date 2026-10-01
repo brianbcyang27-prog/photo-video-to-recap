@@ -294,6 +294,11 @@ def build_report(lib: Library, items: list[Item], ctx: TripContext,
                         else None),
                 "score": round(e.score, 4) if e.item else None,
                 "motion": e.motion,
+                # Per-shot travel, so a film's pacing is auditable after the
+                # fact instead of having to be re-derived by re-running the
+                # cut. Rounded to 4 places because the value is a filter-graph
+                # parameter, and anything past that is noise in a diff.
+                "zoom": (round(e.zoom, 4) if e.zoom is not None else None),
                 "chapter": e.chapter,
             }
             for t, (i, e) in zip(

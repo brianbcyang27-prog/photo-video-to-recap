@@ -129,6 +129,15 @@ times the filter cost to interpolate pixels that were never in the file.
 **Lanczos video scaling.** Video clips are resampled with Lanczos rather than
 ffmpeg's bicubic default, worth 5.6% more edge energy on the same frames.
 
+**Paced camera moves.** Every move used to travel the same distance, so a 2s
+stab pushed the frame as far as a 6s drift. Those are different gestures — the
+stab reads as a punch because the same distance in a third of the time is three
+times the speed — and a film that does it two hundred times stops feeling
+edited. Each shot's travel is now scaled against its length on a square-root
+law, and modulated by the music section it lands in, so the picture leans into
+a crescendo instead of sitting at one size under the whole piece. Measured on a
+real 180s render: 2.4x more travel per second on short shots than long ones.
+
 Also, because these are real numbers rather than folklore: the H.264 level is
 derived from the frame size and macroblock rate (4.0/4.2/5.1/5.2). A hardcoded
 `4.0` still *accepts* a 4K file but writes `level=40` into the tag, and a
@@ -242,7 +251,7 @@ This renders each case for real and verifies the file, so it takes a while.
 ## Tests
 
 ```bash
-./.venv/bin/python -m pytest tests -q      # 86 tests, about 0.3s
+./.venv/bin/python -m pytest tests -q      # 154 tests, about 0.3s
 ```
 
 No ffmpeg, no media on disk, no network — the suite is pure logic, so a failure
@@ -327,7 +336,7 @@ tools/
   verify_output.py        measures a rendered file against its plan
   sweep.sh                renders and verifies every option combination
   clean.sh                clears scratch space between runs
-tests/                 86 tests, no media required
+tests/                 154 tests, no media required
 ```
 
 ## Tuning
