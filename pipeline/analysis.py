@@ -28,8 +28,8 @@ from .quality import FrameMetrics, dhash, load_image, measure
 from .util import (
     MediaInfo,
     ToolError,
-    default_jobs,
     log,
+    probe_jobs,
     progress,
     progress_done,
 )
@@ -340,7 +340,7 @@ def analyse_library(lib: Library, cfg: Analysis,
     returning stale results that look fresh.
     """
     items: list[Item] = []
-    jobs = default_jobs()
+    jobs = probe_jobs()
 
     cache = None
     if cache_dir is not None:

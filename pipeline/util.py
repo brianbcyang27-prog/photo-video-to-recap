@@ -532,9 +532,92 @@ def _gps(row: dict) -> tuple[float, float]:
 
 # ---------------------------------------------------------------------- misc
 
-def default_jobs() -> int:
+# Measured peak resident set for ONE concurrently-rendered segment, by output
+# size. These are the numbers that set the worker count, and they came from
+# /usr/bin/time -l on a real 4032x2268 prepared still:
+#
+#   1080p30  1.6 GB     1080p60  1.6 GB
+#   4K30     4.8 GB     4K60     3.0-4.2 GB   (noisy, so the larger is used)
+#
+# 4K is roughly three times the memory of 1080p for the same still, because
+# zoompan holds a frame-sized buffer per in-flight frame and libx264's
+# lookahead grows with the frame area.
+#
+# Keyed by LONG SIDE in pixels, not by the "1080p"/"4K" name - those are
+# different numbers, and 1920x1080 is a 1920-long-side frame. Keying by the
+# name while looking up by long side made the default size miss the table and
+# fall through to the worst case; a test caught that before it shipped.
+SEGMENT_PEAK_GB = {1920: 1.6, 2560: 2.6, 3840: 4.8}
+
+# Leave this much of physical RAM for everything else on the machine. The
+# renderer is not the only thing running: the desktop, the browser, the agent
+# driving it, and the ffmpeg parent all need headroom, and a worker that gets
+# killed by the kernel mid-render leaves a half-written file rather than an
+# error anyone can read.
+MEMORY_HEADROOM_GB = 4.0
+
+
+def default_jobs(width: int = 1920, height: int = 1080) -> int:
+    """How many segments to render at once.
+
+    Bounded by memory first and CPU second, in that order, because running out
+    of memory is not slow - it is a crash, and on a laptop it is a crash that
+    takes other people's unsaved work with it.
+
+    This used to be `min(8, cpu - 1)`, ignoring the frame size entirely. At
+    4K60 on a 16GB machine that is 8 workers x 3-4.8GB = 24-38GB of concurrent
+    allocation against 16GB of RAM, which is what made the machine unstable.
+
+    At 1080p the answer moves from 8 to 7 on a 16GB/10-core host, because 8 x
+    1.6GB is 12.8GB and does not fit under the headroom either. That one worker
+    is the honest cost of the fix; everything above 4K is where the real time
+    was being lost.
+    """
     cpu = os.cpu_count() or 4
-    return max(1, min(8, cpu - 1))
+    long_side = max(int(width), int(height))
+    peak = SEGMENT_PEAK_GB.get(long_side)
+    if peak is None:
+        # An unrecognised size: assume the largest we know about rather than
+        # the smallest, because guessing low here is the expensive direction.
+        peak = max(SEGMENT_PEAK_GB.values())
+
+    try:
+        total_gb = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") \
+            / (1024 ** 3)
+    except (ValueError, OSError, AttributeError):
+        total_gb = 8.0            # unknown: be conservative
+    affordable = int((total_gb - MEMORY_HEADROOM_GB) // peak)
+    return max(1, min(cpu - 1, 8, affordable))
+
+
+# Peak resident set for one ffprobe, or for the single full-resolution frame
+# that analysis pulls out of a video to measure sharpness and exposure. Both
+# are a fixed small cost that does not scale with the output size, because no
+# output frame is ever built - measured at well under 0.5GB either way.
+PROBE_PEAK_GB = 0.5
+
+
+def probe_jobs() -> int:
+    """How many probe/decode-at-one-timestamp workers to run.
+
+    Separate from default_jobs because the cost model is different. Probing is
+    the slowest step in the pipeline on a real library (11,293 files at ~0.15s
+    is 27 minutes) and it is almost entirely subprocess latency, so it wants as
+    much parallelism as memory allows rather than a frame-size table.
+
+    It used to call default_jobs() and inherit whatever that returned. Now that
+    default_jobs is frame-size-aware, that would have been the wrong coupling:
+    a 4K render would quietly halve the probe pool for no reason, slowing down
+    a step whose memory use did not change at all.
+    """
+    cpu = os.cpu_count() or 4
+    try:
+        total_gb = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") \
+            / (1024 ** 3)
+    except (ValueError, OSError, AttributeError):
+        total_gb = 8.0
+    affordable = int((total_gb - MEMORY_HEADROOM_GB) // PROBE_PEAK_GB)
+    return max(1, min(cpu - 1, 8, affordable))
 
 
 def clamp(value: float, low: float, high: float) -> float:

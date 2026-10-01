@@ -18,12 +18,12 @@ from .util import (
     PipelineError,
     ToolError,
     _gps,
-    default_jobs,
     exiftool_metadata,
     log,
     parse_exif_datetime,
     parse_utc_offset,
     probe,
+    probe_jobs,
     progress,
     progress_done,
 )
@@ -209,7 +209,7 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None,
     # ~0.15s each is 27 minutes of waiting before selection could begin, all
     # of it serial subprocess latency. Order is restored afterwards so the
     # library is deterministic regardless of which probe finished first.
-    jobs = default_jobs()
+    jobs = probe_jobs()
     log(f"probing {len(photo_paths) + len(video_paths)} files with {jobs} workers")
     work = ([(p, "photo") for p in photo_paths]
             + [(p, "video") for p in video_paths])

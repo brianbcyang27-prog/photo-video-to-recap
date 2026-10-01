@@ -7,6 +7,7 @@ of RAM; this stays flat and scales to full-length timelines.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,7 @@ from .config import Pipeline
 from .music import MusicResult
 from .select import CutList, Entry
 from .util import (
+    SEGMENT_PEAK_GB,
     ToolError,
     default_jobs,
     ensure_dir,
@@ -810,6 +812,12 @@ def prepare_render(cfg: Pipeline) -> None:
     ZOOM_H = cfg.render.height
 
 
+def _segment_peak_gb(width: int, height: int) -> float:
+    """Peak GB for one segment at this frame size, from the measured table."""
+    return SEGMENT_PEAK_GB.get(max(int(width), int(height)),
+                               max(SEGMENT_PEAK_GB.values()))
+
+
 def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
            work: Path, out_path: Path, *, keep_temp: bool = False) -> RenderResult:
     prepare_render(cfg)
@@ -915,7 +923,20 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
     progress_done("preparing frames")
 
     # ---- segments
-    jobs = cfg.jobs or default_jobs()
+    #
+    # Memory first: each worker is a full ffmpeg holding a frame-sized buffer
+    # per in-flight frame, and at 4K that is several GB apiece. Sizing this off
+    # CPU count alone is what made a 4K render crash a 16GB machine.
+    by_cpu = max(1, min(8, (os.cpu_count() or 4) - 1))
+    jobs = cfg.jobs or default_jobs(cfg.render.width, cfg.render.height)
+    if cfg.jobs:
+        log(f"using {cfg.jobs} parallel worker(s) as requested")
+    elif jobs < by_cpu:
+        log(f"using {jobs} parallel worker(s) rather than {by_cpu}: a "
+            f"{cfg.render.width}x{cfg.render.height} segment needs about "
+            f"{_segment_peak_gb(cfg.render.width, cfg.render.height):.1f}GB "
+            f"while one is being rendered, and {jobs} of them fit in memory "
+            f"with room to spare. Pass --jobs to override.")
     seg_paths: list[Path | None] = [None] * len(entries)
 
     def build(idx: int) -> tuple[int, Path]:
