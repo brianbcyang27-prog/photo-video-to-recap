@@ -218,7 +218,11 @@ def _greedy_fill(deduped: list[Item], ctx: TripContext, cfg: Pipeline,
                 continue
             if spent + need_of(it) > quota:
                 break
-            take(it)
+            # take() reports refusal once the whole budget is spent. Counting
+            # the shot anyway charged the chapter for an item it never got,
+            # so its effective quota was smaller than the one computed for it.
+            if not take(it):
+                break
             spent += need_of(it)
         if running >= target_content:
             return chosen

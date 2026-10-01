@@ -27,6 +27,21 @@ class Render:
     # "crop" = centre-crop to fill (may cut content).
     # "pad"  = black bars.
     fit: str = "blur"
+    # Apply `fit` per shot rather than to the whole video. A 4:3 landscape photo
+    # in a 16:9 frame only has ~25% of its width to give up, so centre-cropping
+    # costs a strip of sky and foreground and looks deliberate; blur-filling the
+    # same photo puts blurred bars down both sides and looks like a mistake.
+    # Portrait shots are the opposite case - cropping one to 16:9 throws away
+    # most of the frame - so those keep the blur treatment and nothing is cut.
+    # Measured on the real library, 139 of 141 photos are 4:3 landscape, so this
+    # is the difference between bars on nearly every shot and bars on none.
+    # False restores the old behaviour of using `fit` for everything.
+    fit_per_shot: bool = True
+    # A shot is filled edge-to-edge when it is at least this fraction as wide as
+    # the frame; below that the mismatch is big enough that cropping starts
+    # costing real content. 4:3 lands at 0.75 and square at 0.56, so 0.70
+    # separates them with margin rather than sitting exactly on the boundary.
+    fit_crop_min_aspect: float = 0.70
     crf: int = 18
     preset: str = "veryfast"
     audio_bitrate: str = "192k"

@@ -62,7 +62,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     v = p.add_argument_group("look")
     v.add_argument("--fit", choices=["blur", "crop", "pad"], default="blur",
-                   help="how portrait shots fill a landscape frame")
+                   help="how shots that do not match the frame are arranged")
+    v.add_argument("--fit-per-shot", dest="fit_per_shot",
+                   action=argparse.BooleanOptionalAction, default=True,
+                   help="arrange each shot on its own shape: landscape shots "
+                        "fill the frame edge to edge, portrait ones keep the "
+                        "blur so nothing is cut "
+                        "(--no-fit-per-shot uses one style for everything)")
     v.add_argument("--fps", type=int, default=30)
     v.add_argument("--title", default="", help="main title for the opening card")
     v.add_argument("--no-titles", action="store_true", help="skip chapter title cards")
@@ -92,6 +98,7 @@ def cfg_from_args(a: argparse.Namespace) -> Pipeline:
     cfg.render = Render(
         fps=a.fps,
         fit=a.fit,
+        fit_per_shot=a.fit_per_shot,
         crf=a.quality,
         ken_burns=not a.no_ken_burns,
         zoom_amount=a.zoom,

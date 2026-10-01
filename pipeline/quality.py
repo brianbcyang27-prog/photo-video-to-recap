@@ -92,9 +92,85 @@ def _load_via_ffmpeg(path: Path) -> np.ndarray | None:
     return np.frombuffer(proc.stdout[:need], dtype=np.uint8).reshape(h, w, 3)
 
 
-def load_image(path: Path, max_long_side: int = 0) -> Image.Image | None:
-    """Robust image load: PIL -> sips -> ffmpeg. EXIF orientation applied."""
+def apply_exif_orientation(img: Image.Image, o: int) -> Image.Image:
+    """Turn stored pixels the way the EXIF Orientation tag says to display them.
+
+    Orientation is the transform a viewer must apply to the stored image, on the
+    standard 1-8 scale. Values 5-8 also transpose the axes, which is what makes
+    a portrait shot legible as portrait rather than as a sideways landscape.
+    """
+    if o == 2:
+        return img.transpose(Image.FLIP_LEFT_RIGHT)
+    if o == 3:
+        return img.transpose(Image.ROTATE_180)
+    if o == 4:
+        return img.transpose(Image.FLIP_TOP_BOTTOM)
+    if o == 5:
+        return img.transpose(Image.TRANSPOSE)
+    if o == 6:
+        return img.rotate(-90, expand=True)
+    if o == 7:
+        return img.transpose(Image.TRANSVERSE)
+    if o == 8:
+        return img.rotate(90, expand=True)
+    return img
+
+
+def exif_orientation(path: Path) -> int:
+    """Read the EXIF Orientation tag, cached per file+size+mtime.
+
+    Only used when the caller has no MediaInfo to hand (the verifier, and any
+    one-off inspection). Ingest already fetches this for every file in one
+    batched exiftool call, so the hot paths pass it in instead of paying for a
+    subprocess per image.
+    """
+    key = str(path)
+    try:
+        st = path.stat()
+        key = f"{path}|{st.st_size}|{st.st_mtime_ns}"
+    except OSError:
+        pass
+    cached = _ORIENT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    value = 1
+    try:
+        out = subprocess.run(
+            ["exiftool", "-s3", "-n", "-Orientation", str(path)],
+            capture_output=True, text=True, timeout=20,
+        ).stdout.strip().splitlines()
+        if out and out[0].strip().isdigit():
+            v = int(out[0].strip())
+            if 1 <= v <= 8:
+                value = v
+    except Exception:
+        pass
+    if len(_ORIENT_CACHE) > 20000:                       # keep the map bounded
+        _ORIENT_CACHE.clear()
+    _ORIENT_CACHE[key] = value
+    return value
+
+
+_ORIENT_CACHE: dict[str, int] = {}
+
+
+def load_image(path: Path, max_long_side: int = 0,
+               orientation: int | None = None) -> Image.Image | None:
+    """Robust image load: PIL -> sips -> ffmpeg. EXIF orientation applied.
+
+    The orientation has to be applied on whichever branch won, because the
+    three loaders disagree about it: PIL only rotates if it can open the file at
+    all, and it cannot open HEIC (6,087 of this library's 6,972 photos), so
+    those photos arrived here already carrying a quarter-turn tag and were
+    handed back lying on their side. ffmpeg autorotates on its own; sips, the
+    fast native path, quietly ignores the tag. So the sips branch is the one
+    that has to be corrected by hand.
+
+    `orientation` is the EXIF Orientation tag (1-8) if the caller already knows
+    it, which avoids a subprocess per image.
+    """
     img: Image.Image | None = None
+    needs_rotate = False
     try:
         img = Image.open(path)
         img.load()
@@ -109,13 +185,17 @@ def load_image(path: Path, max_long_side: int = 0) -> Image.Image | None:
         img = img.convert("RGB")
     else:
         img = _load_via_sips(path)
+        needs_rotate = img is not None          # sips ignores Orientation
         if img is None:
-            arr = _load_via_ffmpeg(path)
+            arr = _load_via_ffmpeg(path)         # ffmpeg already autorotates
             if arr is not None:
                 img = Image.fromarray(arr)
 
     if img is None:
         return None
+    if needs_rotate:
+        o = exif_orientation(path) if orientation is None else orientation
+        img = apply_exif_orientation(img, o)
     if max_long_side:
         img = resize_long_side(img, max_long_side)
     return img

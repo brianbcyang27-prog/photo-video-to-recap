@@ -185,6 +185,7 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
         make = str(row.get("Make") or "").strip()
         model = str(row.get("Model") or "").strip()
         info.camera = f"{make} {model}".strip()
+        _true_photo_size(info, row)
         return info
 
     # Probing is an ffprobe/ffmpeg subprocess per file, so it releases the GIL
@@ -222,6 +223,58 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
     _borrow_offsets(lib)
     _report_skips(lib)
     return lib
+
+
+def _true_photo_size(info: MediaInfo, row: dict) -> None:
+    """Replace ffprobe's photo dimensions with the ones exiftool read.
+
+    ffprobe reports the dimensions of whatever stream it finds first, and for a
+    HEIC that is the embedded thumbnail rather than the image: a 4032x3024
+    iPhone photo came back as 512x512 and classified as square, another as
+    640x896 and classified portrait. 6,087 of this library's 6,972 photos are
+    HEIC, so orientation was effectively a coin flip.
+
+    Nothing downstream acted on it - MediaInfo.orientation was dead code - so
+    this never damaged a finished render. It did make the "too small to be real
+    content" junk check in classify() meaningless for HEICs, since a 200x200
+    photo still carries a 512x512 thumbnail, and it would mislead the first
+    thing that did care about orientation.
+
+    exiftool already reads ImageWidth/ImageHeight for every file as part of the
+    same batch call, so the correct dimensions were on hand and unused.
+
+    A quarter-turn orientation (EXIF 5-8) means the stored axes are transposed
+    relative to how the photo displays, so the swap is applied here; 180 and
+    mirror values leave the axes alone.
+
+    It reads the Orientation tag, not Rotation. exiftool's Rotation is a
+    derived, inconsistently-reported column - under -n it came back as 3 for a
+    photo whose Orientation was plainly 6 - so the swap it guarded never fired,
+    and the 100 Orientation-6 photos in the finished edit were reported as the
+    4:3 landscape they are stored as rather than the portrait they display as.
+    That is what let the renderer centre-crop them instead of giving them the
+    blur treatment, on top of showing them lying on their side.
+
+    The renderer applies its own transpose for display; this only corrects the
+    reported size, and hands the tag on so it does not have to ask again.
+    """
+    if info.kind != "photo":
+        return
+    try:
+        o = int(row.get("Orientation") or 1)
+    except (TypeError, ValueError):
+        o = 1
+    info.exif_orientation = o if 1 <= o <= 8 else 1
+    try:
+        w = int(row.get("ImageWidth") or 0)
+        h = int(row.get("ImageHeight") or 0)
+    except (TypeError, ValueError):
+        return
+    if w <= 0 or h <= 0:
+        return
+    if info.exif_orientation in (5, 6, 7, 8):
+        w, h = h, w
+    info.width, info.height = w, h
 
 
 def _borrow_offsets(lib: Library) -> None:

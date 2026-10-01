@@ -468,3 +468,63 @@
 [pipeline] [3183.9s]  info [6/7] rendering
 [pipeline] [3183.9s]  info rendering 223 segments -> 10:00 @ 1920x1080
 [pipeline] [3183.9s]  info preparing still frames and title cards
+[pipeline] [3331.0s]  info   segments 5/223
+[pipeline] [3332.0s]  info   segments 10/223
+[pipeline] [3334.1s]  info   segments 15/223
+[pipeline] [3336.2s]  info   segments 20/223
+[pipeline] [3336.7s]  info   segments 25/223
+[pipeline] [3339.0s]  info   segments 30/223
+[pipeline] [3340.5s]  info   segments 35/223
+[pipeline] [3343.2s]  info   segments 40/223
+[pipeline] [3344.9s]  info   segments 45/223
+[pipeline] [3346.3s]  info   segments 50/223
+[pipeline] [3347.4s]  info   segments 55/223
+[pipeline] [3349.4s]  info   segments 60/223
+[pipeline] [3351.5s]  info   segments 65/223
+[pipeline] [3353.1s]  info   segments 70/223
+[pipeline] [3354.2s]  info   segments 75/223
+[pipeline] [3355.8s]  info   segments 80/223
+[pipeline] [3357.7s]  info   segments 85/223
+[pipeline] [3359.7s]  info   segments 90/223
+[pipeline] [3363.5s]  info   segments 95/223
+[pipeline] [3366.2s]  info   segments 100/223
+[pipeline] [3367.9s]  info   segments 105/223
+[pipeline] [3371.6s]  info   segments 110/223
+[pipeline] [3373.4s]  info   segments 115/223
+[pipeline] [3376.3s]  info   segments 120/223
+[pipeline] [3379.1s]  info   segments 125/223
+[pipeline] [3379.7s]  info   segments 130/223
+[pipeline] [3382.1s]  info   segments 135/223
+[pipeline] [3383.8s]  info   segments 140/223
+[pipeline] [3388.3s]  info   segments 145/223
+[pipeline] [3391.2s]  info   segments 150/223
+[pipeline] [3392.1s]  info   segments 155/223
+[pipeline] [3395.5s]  info   segments 160/223
+[pipeline] [3397.6s]  info   segments 165/223
+[pipeline] [3399.7s]  info   segments 170/223
+[pipeline] [3401.2s]  info   segments 175/223
+[pipeline] [3403.3s]  info   segments 180/223
+[pipeline] [3405.5s]  info   segments 185/223
+[pipeline] [3408.9s]  info   segments 190/223
+[pipeline] [3411.0s]  info   segments 195/223
+[pipeline] [3414.0s]  info   segments 200/223
+[pipeline] [3415.1s]  info   segments 205/223
+[pipeline] [3417.4s]  info   segments 210/223
+[pipeline] [3419.0s]  info   segments 215/223
+[pipeline] [3419.9s]  info   segments 220/223
+[pipeline] [3423.1s]  info   segments 223/223
+[pipeline] [3428.4s]  info extracting and normalising audio
+[pipeline] [3432.5s]  info mixing music under native audio
+[pipeline] [3437.9s]  info muxing final file
+[pipeline] [3450.5s]  info 
+[pipeline] [3450.5s]  info [7/7] writing the report
+[pipeline] [3451.8s]  info report: europe_trip.md
+[pipeline] [3451.8s]  info edl:    europe_trip.edl.json
+[pipeline] [3451.8s]  info 
+[pipeline] [3451.8s]  info ==================================================================
+[pipeline] [3451.8s]  info done in 3452s
+[pipeline] [3451.8s]  info   video:  /Users/brianyang/Desktop/video/out/europe_trip.mp4  (10:00, 1920x1080)
+[pipeline] [3451.8s]  info   report: /Users/brianyang/Desktop/video/out/europe_trip.md
+[pipeline] [3451.8s]  info ==================================================================
+
+

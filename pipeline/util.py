@@ -126,6 +126,10 @@ class MediaInfo:
     longitude: float = 0.0
     camera: str = ""
     filesize: int = 0
+    # EXIF Orientation tag (1-8) for photos: the transform a viewer must apply
+    # to the stored pixels. Kept because the render path needs it to turn a
+    # sideways photo upright, and the tag is stripped once the image is loaded.
+    exif_orientation: int = 1
 
     @property
     def display_size(self) -> tuple[int, int]:

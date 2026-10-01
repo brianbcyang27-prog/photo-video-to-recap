@@ -71,6 +71,26 @@ def _contain(img: Image.Image, w: int, h: int) -> Image.Image:
                        max(1, round(img.height * scale))), Image.LANCZOS)
 
 
+def fit_for(aspect: float, cfg: Pipeline) -> str:
+    """How this one shot should be arranged inside the frame.
+
+    A 16:9 frame and a 4:3 landscape photo disagree about 25% of the width.
+    Centre-cropping that costs a strip of sky and foreground and reads as a
+    deliberate crop; blur-filling it puts visible bars down both sides of every
+    single shot and reads as a bug. So a landscape shot is filled edge-to-edge.
+
+    A portrait shot disagrees about far more - cropping a 9:16 phone photo to
+    16:9 discards most of the picture - so it keeps the blur treatment and
+    nothing is cut. `fit` still decides what happens inside each case, so
+    "crop" and "pad" behave exactly as before; only "blur" is refined.
+    """
+    if not cfg.render.fit_per_shot or cfg.render.fit != "blur":
+        return cfg.render.fit
+    frame = cfg.render.width / max(1, cfg.render.height)
+    # Wider than the frame, or wide enough that cropping costs little.
+    return "crop" if aspect >= frame * cfg.render.fit_crop_min_aspect else "blur"
+
+
 def compose(img: Image.Image, w: int, h: int, fit: str = "blur") -> Image.Image:
     """Normalise any aspect ratio into exactly w x h without losing content."""
     if fit == "crop":
@@ -264,12 +284,21 @@ def render_video(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
     frames = max(2, int(round(dur * FPS)))
     width, height = ZOOM_W, ZOOM_H
 
+    # Same per-shot decision as stills. For video the aspect comes from
+    # MediaInfo.display_size, which probe() has already reconciled against what
+    # ffmpeg really decodes - 35 of the 61 clips in the real edit carry a -90
+    # display matrix and are genuinely portrait once upright. An unknown size
+    # falls back to `fit` unchanged rather than guessing.
+    info = entry.item.info
+    aspect = (info.width / info.height) if (info.width and info.height) else 0.0
+    fit = fit_for(aspect, cfg) if aspect else cfg.render.fit
+
     cmd = [
         "ffmpeg", "-y", "-v", "error",
         "-ss", f"{start:.3f}", "-i", str(src),
         "-t", f"{dur + 0.5:.3f}",
         "-an",
-        "-filter_complex", _video_filter(width, height, cfg.render.fit),
+        "-filter_complex", _video_filter(width, height, fit),
         "-map", "[v]",
         "-frames:v", str(frames),
         "-c:v", "libx264", "-crf", str(cfg.render.crf),
@@ -521,7 +550,8 @@ def _load_source(entry: Entry, cfg: Pipeline, target_long: int
         return None
     info = entry.item.info
     if info.kind == "photo":
-        return load_image(info.path, max_long_side=0)
+        return load_image(info.path, max_long_side=0,
+                          orientation=info.exif_orientation)
     mid = entry.item.start + (entry.item.end - entry.item.start) / 2.0
     return load_image_at(info, mid) or None
 
@@ -572,7 +602,11 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
             src = _load_source(e, cfg, sw)
             if src is None:
                 raise ToolError(f"could not load image for {e.label}")
-            canvas = compose(src, sw, sh, cfg.render.fit)
+            # Decided from the pixels just loaded, not from metadata: ffprobe
+            # reports a HEIC's embedded thumbnail, so a 4032x3024 photo arrives
+            # claiming to be 512x512 and would be treated as portrait.
+            canvas = compose(src, sw, sh,
+                             fit_for(src.width / max(1, src.height), cfg))
             canvas.save(target)
             frame_for[i] = target
 

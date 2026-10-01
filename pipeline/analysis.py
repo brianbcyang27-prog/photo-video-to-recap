@@ -93,7 +93,8 @@ class Item:
 
 def analyse_photo(info: MediaInfo, cfg: Analysis) -> Item:
     item = Item(info=info, kind="photo")
-    img = load_image(info.path, max_long_side=cfg.analysis_long_side)
+    img = load_image(info.path, max_long_side=cfg.analysis_long_side,
+                     orientation=info.exif_orientation)
     if img is None:
         item.reject = "could not decode image"
         return item

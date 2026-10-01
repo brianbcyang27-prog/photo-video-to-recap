@@ -244,6 +244,90 @@ def main() -> int:
     check(ok_titles == len(titles),
           f"title cards with legible text: {ok_titles}/{len(titles)}")
 
+    # ---- chapters are labelled with places, and are given a fair share
+    #
+    # Both of these read the EDL rather than the pixels, because both bugs
+    # produce a perfectly well-rendered video. A chapter card is legible
+    # whether it says "Cambridge" or "51.75, -1.26", so the legibility check
+    # above passes either way.
+    #
+    # Coordinate labels mean reverse geocoding was lost partway through the
+    # run. That happened for real: one URLError disabled lookups for the rest
+    # of the render, and 18/18 checks passed on a video whose chapter cards
+    # showed latitude and longitude for three days of the trip.
+    #
+    # Imbalance is the other one. The chapter quota was a no-op through two
+    # separate unit bugs, so a ten-minute recap of a fourteen-day trip was
+    # really a recap of its first three days, and 18/18 checks passed on that
+    # too - every shot was there, every cut was on the beat, and half the trip
+    # had 12 seconds.
+    titled = [e for e in titles if e.get("subtitle")]
+    coord_re = re.compile(r"-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+")
+    coords = [e for e in titled if coord_re.search(e["subtitle"] or "")]
+    check(not coords,
+          f"chapter cards name a real place: "
+          f"{len(titled) - len(coords)}/{len(titled)}"
+          + (f"  (e.g. {coords[0]['subtitle']!r} - geocoding was lost)"
+             if coords else ""))
+
+    # Each chapter's screen time should track how much material it holds.
+    # Compare against the shot count the card itself advertises, so this needs
+    # no access to the library.
+    shots_re = re.compile(r"(\d[\d,]*)\s+shots")
+    by_chapter: dict[int, list[dict]] = {}
+    for e in entries:
+        if e["type"] != "title":
+            continue
+        m = shots_re.search(e.get("subtitle") or "")
+        if m:
+            by_chapter.setdefault(e["chapter"], []).append(
+                {"start": e["start"], "dur": e["duration"],
+                 "shots": int(m.group(1).replace(",", ""))})
+    starts = sorted((e["start"], e["chapter"]) for e in titles)
+    all_shots = sum(i["shots"] for items in by_chapter.values()
+                    for i in items)
+    rates: list[float] = []
+    floored = 0
+    for items in by_chapter.values():
+        start = min(i["start"] for i in items)
+        nxt = [s for s, _ in starts if s > start + 1e-6]
+        end = min(nxt) if nxt else total
+        got = end - start
+        shots = sum(i["shots"] for i in items)
+        if got <= 0 or shots <= 0:
+            continue
+        # Chapters holding a negligible share of the trip get a floor of one
+        # shot each, by design - a day with two photos should still appear.
+        # Judging those against proportional share would fail the very
+        # behaviour the floor exists to provide, so they are counted and
+        # reported separately rather than mixed into the comparison.
+        if shots < all_shots * 0.02:
+            floored += 1
+            continue
+        rates.append(got / shots)
+    if len(rates) >= 3:
+        rates.sort()
+        median = rates[len(rates) // 2]
+        # 6x, chosen to sit between two measured outcomes rather than fitted to
+        # whichever run came last: correct code gives 2.7x on a real 14-day
+        # library (3.0x on the synthetic harness), and the quota bug that
+        # shipped that same library as a three-day recap gave 68x (16x on the
+        # harness). Real residue comes from the per-minute diversity cap and
+        # from the ~30% of the timeline deliberately left to score. The margin
+        # is wide enough for that and far too tight for the bug.
+        worst = rates[-1] / median
+        thinnest = median / max(rates[0], 1e-9)
+        check(max(worst, thinnest) <= 6.0,
+              f"chapters get a fair share of screen time across "
+              f"{len(rates)} chapters "
+              f"(richest earns {worst:.1f}x the median, thinnest "
+              f"{thinnest:.1f}x"
+              + (f", {floored} tiny chapters at the one-shot floor"
+                 if floored else ")"))
+    elif rates:
+        check(True, f"only {len(rates)} chapter(s) hold enough material to "
+                    f"compare screen time fairly")
+
     # ---- Ken Burns: stills must actually move, and move continuously.
     #
     # The obvious version of this test - "is the difference between two frames
