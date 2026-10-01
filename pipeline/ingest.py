@@ -10,10 +10,12 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .config import AUDIO_EXT, PHOTO_EXT, VIDEO_EXT, Pipeline
 from .util import (
-    MediaInfo, PipelineError, ToolError, exiftool_metadata, log, parse_exif_datetime,
-    parse_utc_offset,
+    MediaInfo, PipelineError, ToolError, default_jobs, exiftool_metadata, log,
+    parse_exif_datetime, parse_utc_offset,
     _gps, probe,
 )
 
@@ -185,41 +187,26 @@ def scan(root: Path, *, extra_audio_dirs: list[Path] | None = None) -> Library:
         info.camera = f"{make} {model}".strip()
         return info
 
-    for p in photo_paths:
-        if _looks_like_junk(p, None):
-            lib.rejected.append((p, "screenshot/suspicious name"))
-            continue
-        why = _unreadable(p)
-        if why:
-            lib.rejected.append((p, why))
-            continue
-        try:
-            info = probe(p, "photo")
-        except ToolError as exc:
-            lib.rejected.append((p, _probe_reason(p, exc)))
-            continue
-        if _looks_like_junk(p, info):
-            lib.rejected.append((p, "too small to use"))
-            continue
-        lib.photos.append(finish(info))
+    # Probing is an ffprobe/ffmpeg subprocess per file, so it releases the GIL
+    # for essentially all of its cost and threads scale. This was the single
+    # slowest step in the whole pipeline on a real library: 11,293 files at
+    # ~0.15s each is 27 minutes of waiting before selection could begin, all
+    # of it serial subprocess latency. Order is restored afterwards so the
+    # library is deterministic regardless of which probe finished first.
+    jobs = default_jobs()
+    log(f"probing {len(photo_paths) + len(video_paths)} files with {jobs} workers")
+    work = ([(p, "photo") for p in photo_paths]
+            + [(p, "video") for p in video_paths])
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        results = list(pool.map(lambda pc: classify(*pc), work))
 
-    for p in video_paths:
-        if _looks_like_junk(p, None):
-            lib.rejected.append((p, "screenshot/suspicious name"))
-            continue
-        why = _unreadable(p)
+    for (p, _kind), (path, info, why) in zip(work, results):
         if why:
-            lib.rejected.append((p, why))
-            continue
-        try:
-            info = probe(p, "video")
-        except ToolError as exc:
-            lib.rejected.append((p, _probe_reason(p, exc)))
-            continue
-        if _looks_like_junk(p, info):
-            lib.rejected.append((p, "too small or too short"))
-            continue
-        lib.videos.append(finish(info))
+            lib.rejected.append((path, why))
+        elif _kind == "photo":
+            lib.photos.append(finish(info))
+        else:
+            lib.videos.append(finish(info))
 
     lib.audio = [p for p in audio_paths if p.stat().st_size > 1024]
 
@@ -281,6 +268,30 @@ def _borrow_offsets(lib: Library) -> None:
     # Sorting again: the correction moves files across each other.
     lib.photos.sort(key=lambda i: (i.captured, i.path.name))
     lib.videos.sort(key=lambda i: (i.captured, i.path.name))
+
+
+def classify(p: Path, kind: str) -> tuple[Path, MediaInfo | None, str]:
+    """Junk-name, then unreadable, then probe, then size.
+
+    One file in, one verdict out, no shared state - so scan() can run it across
+    a thread pool. Kept at module level rather than nested in scan() precisely
+    so a test can compare it against a serial implementation and prove the
+    threading did not change which files survive.
+    """
+    if _looks_like_junk(p, None):
+        return (p, None, "screenshot/suspicious name")
+    why = _unreadable(p)
+    if why:
+        return (p, None, why)
+    try:
+        info = probe(p, kind)
+    except ToolError as exc:
+        return (p, None, _probe_reason(p, exc))
+    if _looks_like_junk(p, info):
+        return (p, None,
+                "too small to use" if kind == "photo"
+                else "too small or too short")
+    return (p, info, "")
 
 
 def _report_skips(lib: Library, limit: int = 8) -> None:

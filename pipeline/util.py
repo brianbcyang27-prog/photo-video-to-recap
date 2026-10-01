@@ -295,9 +295,31 @@ def exiftool_metadata(paths: list[Path]) -> dict[str, dict]:
     args = ["exiftool", "-json", "-n", "-charset", "filename=utf8"]
     for w in wanted:
         args += ["-" + w]
-    args += [str(p) for p in paths]
 
-    proc = run(args, timeout=1800, check=False)
+    # Filenames go in an argument file rather than on the command line. A real
+    # trip library is thousands of files with long paths, and the combined
+    # length blew past the OS argument limit with OSError: Argument list too
+    # long - which is a Python-level exception, not an exiftool error, so it
+    # escaped every error path here and killed the run outright.
+    with tempfile.NamedTemporaryFile("w", suffix=".args", delete=False,
+                                     encoding="utf-8") as fh:
+        for p in paths:
+            # exiftool's argument-file format is one argument per line, with
+            # quotes and backslashes escaped. Paths really do contain spaces,
+            # and apostrophes are common in filenames from phones.
+            # exiftool -@ reads filenames one per line, one argument per line. Writing
+            # the raw path avoids having to escape quotes and backslashes, which
+            # is what a shell-quoted argument file would need - and getting that
+            # subtly wrong makes exiftool report "File not found" for every file.
+            fh.write(str(p) + "\n")
+        argfile = fh.name
+    try:
+        proc = run(args + ["-@", argfile], timeout=3600, check=False)
+    finally:
+        try:
+            os.unlink(argfile)
+        except OSError:
+            pass
     # A non-zero exit here is normal, not exceptional: exiftool reports a
     # problem for any single unreadable file (an interrupted copy from a
     # phone, a half-synced iCloud download) and still emits a complete row for
