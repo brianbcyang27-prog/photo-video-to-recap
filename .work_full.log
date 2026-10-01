@@ -153,3 +153,380 @@
 [pipeline] [ 891.2s]  info   photos 6450/6972
 [pipeline] [ 895.0s]  info   photos 6500/6972
 [pipeline] [ 899.4s]  info   photos 6550/6972
+[pipeline] [ 903.3s]  info   photos 6600/6972
+[pipeline] [ 906.5s]  info   photos 6650/6972
+[pipeline] [ 909.8s]  info   photos 6700/6972
+[pipeline] [ 914.0s]  info   photos 6750/6972
+[pipeline] [ 917.6s]  info   photos 6800/6972
+[pipeline] [ 921.1s]  info   photos 6850/6972
+[pipeline] [ 924.6s]  info   photos 6900/6972
+[pipeline] [ 927.9s]  info   photos 6950/6972
+[pipeline] [ 929.2s]  info   photos 6972/6972
+[pipeline] [ 929.2s]  info analysing 5199 videos with 8 workers
+[pipeline] [ 940.5s]  info   videos 25/5199  (2/s, ~39:07 left)
+[pipeline] [ 946.6s]  info   videos 50/5199  (3/s, ~29:55 left)
+[pipeline] [ 952.5s]  info   videos 75/5199  (3/s, ~26:32 left)
+[pipeline] [ 969.2s]  info   videos 100/5199  (3/s, ~33:57 left)
+[pipeline] [ 999.6s]  info   videos 125/5199  (2/s, ~47:37 left)
+[pipeline] [1014.6s]  info   videos 150/5199  (2/s, ~47:55 left)
+[pipeline] [1044.5s]  info   videos 175/5199  (2/s, ~55:10 left)
+[pipeline] [1060.9s]  info   videos 200/5199  (2/s, ~54:53 left)
+[pipeline] [1068.0s]  info   videos 225/5199  (2/s, ~51:08 left)
+[pipeline] [1075.1s]  info   videos 250/5199  (2/s, ~48:09 left)
+[pipeline] [1080.3s]  info   videos 275/5199  (2/s, ~45:05 left)
+[pipeline] [1086.0s]  info   videos 300/5199  (2/s, ~42:40 left)
+[pipeline] [1092.0s]  info   videos 325/5199  (2/s, ~40:41 left)
+[pipeline] [1097.5s]  info   videos 350/5199  (2/s, ~38:52 left)
+[pipeline] [1106.3s]  info   videos 375/5199  (2/s, ~37:59 left)
+[pipeline] [1115.9s]  info   videos 400/5199  (2/s, ~37:20 left)
+[pipeline] [1122.5s]  info   videos 425/5199  (2/s, ~36:11 left)
+[pipeline] [1130.6s]  info   videos 450/5199  (2/s, ~35:26 left)
+[pipeline] [1142.8s]  info   videos 475/5199  (2/s, ~35:25 left)
+[pipeline] [1151.4s]  info   videos 500/5199  (2/s, ~34:48 left)
+[pipeline] [1157.3s]  info   videos 525/5199  (2/s, ~33:50 left)
+[pipeline] [1180.8s]  info   videos 550/5199  (2/s, ~35:27 left)
+[pipeline] [1189.5s]  info   videos 575/5199  (2/s, ~34:54 left)
+[pipeline] [1205.2s]  info   videos 600/5199  (2/s, ~35:16 left)
+[pipeline] [1214.6s]  info   videos 625/5199  (2/s, ~34:48 left)
+[pipeline] [1223.8s]  info   videos 650/5199  (2/s, ~34:22 left)
+[pipeline] [1233.6s]  info   videos 675/5199  (2/s, ~34:00 left)
+[pipeline] [1238.4s]  info   videos 700/5199  (2/s, ~33:07 left)
+[pipeline] [1245.0s]  info   videos 725/5199  (2/s, ~32:29 left)
+[pipeline] [1250.4s]  info   videos 750/5199  (2/s, ~31:45 left)
+[pipeline] [1275.2s]  info   videos 775/5199  (2/s, ~32:55 left)
+[pipeline] [1286.5s]  info   videos 800/5199  (2/s, ~32:45 left)
+[pipeline] [1295.5s]  info   videos 825/5199  (2/s, ~32:22 left)
+[pipeline] [1304.8s]  info   videos 850/5199  (2/s, ~32:02 left)
+[pipeline] [1320.4s]  info   videos 875/5199  (2/s, ~32:13 left)
+[pipeline] [1330.6s]  info   videos 900/5199  (2/s, ~31:57 left)
+[pipeline] [1335.1s]  info   videos 925/5199  (2/s, ~31:16 left)
+[pipeline] [1342.4s]  info   videos 950/5199  (2/s, ~30:48 left)
+[pipeline] [1353.4s]  info   videos 975/5199  (2/s, ~30:38 left)
+[pipeline] [1360.0s]  info   videos 1000/5199  (2/s, ~30:09 left)
+[pipeline] [1366.2s]  info   videos 1025/5199  (2/s, ~29:39 left)
+[pipeline] [1380.9s]  info   videos 1050/5199  (2/s, ~29:45 left)
+[pipeline] [1386.6s]  info   videos 1075/5199  (2/s, ~29:15 left)
+[pipeline] [1394.0s]  info   videos 1100/5199  (2/s, ~28:52 left)
+[pipeline] [1405.8s]  info   videos 1125/5199  (2/s, ~28:46 left)
+[pipeline] [1419.0s]  info   videos 1150/5199  (2/s, ~28:45 left)
+[pipeline] [1438.9s]  info   videos 1175/5199  (2/s, ~29:05 left)
+[pipeline] [1457.2s]  info   videos 1200/5199  (2/s, ~29:20 left)
+[pipeline] [1465.4s]  info   videos 1225/5199  (2/s, ~28:59 left)
+[pipeline] [1490.9s]  info   videos 1250/5199  (2/s, ~29:35 left)
+[pipeline] [1500.8s]  info   videos 1275/5199  (2/s, ~29:19 left)
+[pipeline] [1507.3s]  info   videos 1300/5199  (2/s, ~28:54 left)
+[pipeline] [1518.9s]  info   videos 1325/5199  (2/s, ~28:44 left)
+[pipeline] [1530.5s]  info   videos 1350/5199  (2/s, ~28:34 left)
+[pipeline] [1540.4s]  info   videos 1375/5199  (2/s, ~28:20 left)
+[pipeline] [1551.3s]  info   videos 1400/5199  (2/s, ~28:08 left)
+[pipeline] [1560.6s]  info   videos 1425/5199  (2/s, ~27:52 left)
+[pipeline] [1570.7s]  info   videos 1450/5199  (2/s, ~27:39 left)
+[pipeline] [1581.6s]  info   videos 1475/5199  (2/s, ~27:27 left)
+[pipeline] [1595.7s]  info   videos 1500/5199  (2/s, ~27:24 left)
+[pipeline] [1605.2s]  info   videos 1525/5199  (2/s, ~27:09 left)
+[pipeline] [1613.1s]  info   videos 1550/5199  (2/s, ~26:50 left)
+[pipeline] [1619.9s]  info   videos 1575/5199  (2/s, ~26:29 left)
+[pipeline] [1628.1s]  info   videos 1600/5199  (2/s, ~26:12 left)
+[pipeline] [1640.0s]  info   videos 1625/5199  (2/s, ~26:03 left)
+[pipeline] [1662.8s]  info   videos 1650/5199  (2/s, ~26:18 left)
+[pipeline] [1687.1s]  info   videos 1675/5199  (2/s, ~26:35 left)
+[pipeline] [1697.3s]  info   videos 1700/5199  (2/s, ~26:21 left)
+[pipeline] [1706.5s]  info   videos 1725/5199  (2/s, ~26:06 left)
+[pipeline] [1719.1s]  info   videos 1750/5199  (2/s, ~25:57 left)
+[pipeline] [1728.4s]  info   videos 1775/5199  (2/s, ~25:42 left)
+[pipeline] [1737.3s]  info   videos 1800/5199  (2/s, ~25:26 left)
+[pipeline] [1749.1s]  info   videos 1825/5199  (2/s, ~25:16 left)
+[pipeline] [1773.1s]  info   videos 1850/5199  (2/s, ~25:28 left)
+[pipeline] [1801.6s]  info   videos 1875/5199  (2/s, ~25:47 left)
+[pipeline] [1828.2s]  info   videos 1900/5199  (2/s, ~26:01 left)
+[pipeline] [1848.0s]  info   videos 1925/5199  (2/s, ~26:03 left)
+[pipeline] [1897.0s]  info   videos 1950/5199  (2/s, ~26:53 left)
+[pipeline] [1916.7s]  info   videos 1975/5199  (2/s, ~26:52 left)
+[pipeline] [1929.7s]  info   videos 2000/5199  (2/s, ~26:40 left)
+[pipeline] [1939.6s]  info   videos 2025/5199  (2/s, ~26:24 left)
+[pipeline] [1950.3s]  info   videos 2050/5199  (2/s, ~26:08 left)
+[pipeline] [1959.8s]  info   videos 2075/5199  (2/s, ~25:52 left)
+[pipeline] [1971.4s]  info   videos 2100/5199  (2/s, ~25:38 left)
+[pipeline] [1985.1s]  info   videos 2125/5199  (2/s, ~25:27 left)
+[pipeline] [2013.2s]  info   videos 2150/5199  (2/s, ~25:37 left)
+[pipeline] [2033.2s]  info   videos 2175/5199  (2/s, ~25:35 left)
+[pipeline] [2069.6s]  info   videos 2200/5199  (2/s, ~25:55 left)
+[pipeline] [2080.7s]  info   videos 2225/5199  (2/s, ~25:39 left)
+[pipeline] [2090.3s]  info   videos 2250/5199  (2/s, ~25:22 left)
+[pipeline] [2100.5s]  info   videos 2275/5199  (2/s, ~25:05 left)
+[pipeline] [2110.5s]  info   videos 2300/5199  (2/s, ~24:49 left)
+[pipeline] [2124.8s]  info   videos 2325/5199  (2/s, ~24:38 left)
+[pipeline] [2136.6s]  info   videos 2350/5199  (2/s, ~24:24 left)
+[pipeline] [2145.5s]  info   videos 2375/5199  (2/s, ~24:06 left)
+[pipeline] [2157.3s]  info   videos 2400/5199  (2/s, ~23:52 left)
+[pipeline] [2174.3s]  info   videos 2425/5199  (2/s, ~23:44 left)
+[pipeline] [2183.1s]  info   videos 2450/5199  (2/s, ~23:27 left)
+[pipeline] [2193.1s]  info   videos 2475/5199  (2/s, ~23:11 left)
+[pipeline] [2210.7s]  info   videos 2500/5199  (2/s, ~23:03 left)
+[pipeline] [2226.4s]  info   videos 2525/5199  (2/s, ~22:54 left)
+[pipeline] [2237.8s]  info   videos 2550/5199  (2/s, ~22:39 left)
+[pipeline] [2247.0s]  info   videos 2575/5199  (2/s, ~22:23 left)
+[pipeline] [2256.3s]  info   videos 2600/5199  (2/s, ~22:07 left)
+[pipeline] [2267.7s]  info   videos 2625/5199  (2/s, ~21:53 left)
+[pipeline] [2277.3s]  info   videos 2650/5199  (2/s, ~21:37 left)
+[pipeline] [2286.5s]  info   videos 2675/5199  (2/s, ~21:21 left)
+[pipeline] [2296.2s]  info   videos 2700/5199  (2/s, ~21:05 left)
+[pipeline] [2308.2s]  info   videos 2725/5199  (2/s, ~20:52 left)
+[pipeline] [2320.5s]  info   videos 2750/5199  (2/s, ~20:39 left)
+[pipeline] [2329.1s]  info   videos 2775/5199  (2/s, ~20:23 left)
+[pipeline] [2336.6s]  info   videos 2800/5199  (2/s, ~20:06 left)
+[pipeline] [2343.7s]  info   videos 2825/5199  (2/s, ~19:49 left)
+[pipeline] [2354.1s]  info   videos 2850/5199  (2/s, ~19:34 left)
+[pipeline] [2364.8s]  info   videos 2875/5199  (2/s, ~19:20 left)
+[pipeline] [2374.2s]  info   videos 2900/5199  (2/s, ~19:06 left)
+[pipeline] [2384.4s]  info   videos 2925/5199  (2/s, ~18:51 left)
+[pipeline] [2392.2s]  info   videos 2950/5199  (2/s, ~18:35 left)
+[pipeline] [2401.9s]  info   videos 2975/5199  (2/s, ~18:21 left)
+[pipeline] [2408.0s]  info   videos 3000/5199  (2/s, ~18:04 left)
+[pipeline] [2415.4s]  info   videos 3025/5199  (2/s, ~17:48 left)
+[pipeline] [2468.2s]  info   videos 3050/5199  (2/s, ~18:04 left)
+[pipeline] [2493.0s]  info   videos 3075/5199  (2/s, ~18:00 left)
+[pipeline] [2503.1s]  info   videos 3100/5199  (2/s, ~17:46 left)
+[pipeline] [2510.7s]  info   videos 3125/5199  (2/s, ~17:30 left)
+[pipeline] [2516.6s]  info   videos 3150/5199  (2/s, ~17:13 left)
+[pipeline] [2523.4s]  info   videos 3175/5199  (2/s, ~16:56 left)
+[pipeline] [2529.6s]  info   videos 3200/5199  (2/s, ~16:40 left)
+[pipeline] [2537.1s]  info   videos 3225/5199  (2/s, ~16:24 left)
+[pipeline] [2544.3s]  info   videos 3250/5199  (2/s, ~16:09 left)
+[pipeline] [2548.6s]  info   videos 3275/5199  (2/s, ~15:51 left)
+[pipeline] [2561.6s]  info   videos 3300/5199  (2/s, ~15:39 left)
+[pipeline] [2576.4s]  info   videos 3325/5199  (2/s, ~15:28 left)
+[pipeline] [2583.5s]  info   videos 3350/5199  (2/s, ~15:13 left)
+[pipeline] [2589.8s]  info   videos 3375/5199  (2/s, ~14:57 left)
+[pipeline] [2596.8s]  info   videos 3400/5199  (2/s, ~14:42 left)
+[pipeline] [2603.4s]  info   videos 3425/5199  (2/s, ~14:27 left)
+[pipeline] [2609.2s]  info   videos 3450/5199  (2/s, ~14:12 left)
+[pipeline] [2615.2s]  info   videos 3475/5199  (2/s, ~13:56 left)
+[pipeline] [2620.2s]  info   videos 3500/5199  (2/s, ~13:41 left)
+[pipeline] [2627.4s]  info   videos 3525/5199  (2/s, ~13:26 left)
+[pipeline] [2632.6s]  info   videos 3550/5199  (2/s, ~13:11 left)
+[pipeline] [2638.6s]  info   videos 3575/5199  (2/s, ~12:57 left)
+[pipeline] [2646.2s]  info   videos 3600/5199  (2/s, ~12:43 left)
+[pipeline] [2661.3s]  info   videos 3625/5199  (2/s, ~12:32 left)
+[pipeline] [2670.7s]  info   videos 3650/5199  (2/s, ~12:19 left)
+[pipeline] [2683.1s]  info   videos 3675/5199  (2/s, ~12:07 left)
+[pipeline] [2698.8s]  info   videos 3700/5199  (2/s, ~11:57 left)
+[pipeline] [2710.0s]  info   videos 3725/5199  (2/s, ~11:45 left)
+[pipeline] [2726.5s]  info   videos 3750/5199  (2/s, ~11:34 left)
+[pipeline] [2732.4s]  info   videos 3775/5199  (2/s, ~11:20 left)
+[pipeline] [2743.8s]  info   videos 3800/5199  (2/s, ~11:08 left)
+[pipeline] [2757.4s]  info   videos 3825/5199  (2/s, ~10:57 left)
+[pipeline] [2767.9s]  info   videos 3850/5199  (2/s, ~10:44 left)
+[pipeline] [2778.8s]  info   videos 3875/5199  (2/s, ~10:32 left)
+[pipeline] [2795.5s]  info   videos 3900/5199  (2/s, ~10:22 left)
+[pipeline] [2805.7s]  info   videos 3925/5199  (2/s, ~10:09 left)
+[pipeline] [2818.2s]  info   videos 3950/5199  (2/s, ~9:57 left)
+[pipeline] [2836.0s]  info   videos 3975/5199  (2/s, ~9:47 left)
+[pipeline] [2848.8s]  info   videos 4000/5199  (2/s, ~9:35 left)
+[pipeline] [2857.1s]  info   videos 4025/5199  (2/s, ~9:22 left)
+[pipeline] [2866.6s]  info   videos 4050/5199  (2/s, ~9:10 left)
+[pipeline] [2874.2s]  info   videos 4075/5199  (2/s, ~8:56 left)
+[pipeline] [2884.9s]  info   videos 4100/5199  (2/s, ~8:44 left)
+[pipeline] [2896.5s]  info   videos 4125/5199  (2/s, ~8:32 left)
+[pipeline] [2909.0s]  info   videos 4150/5199  (2/s, ~8:20 left)
+[pipeline] [2920.6s]  info   videos 4175/5199  (2/s, ~8:08 left)
+[pipeline] [2931.7s]  info   videos 4200/5199  (2/s, ~7:56 left)
+[pipeline] [2946.9s]  info   videos 4225/5199  (2/s, ~7:45 left)
+[pipeline] [2977.6s]  info   videos 4250/5199  (2/s, ~7:37 left)
+[pipeline] [2987.3s]  info   videos 4275/5199  (2/s, ~7:25 left)
+[pipeline] [2998.7s]  info   videos 4300/5199  (2/s, ~7:13 left)
+[pipeline] [3007.3s]  info   videos 4325/5199  (2/s, ~7:00 left)
+[pipeline] [3019.0s]  info   videos 4350/5199  (2/s, ~6:48 left)
+[pipeline] [3029.8s]  info   videos 4375/5199  (2/s, ~6:36 left)
+[pipeline] [3035.9s]  info   videos 4400/5199  (2/s, ~6:23 left)
+[pipeline] [3045.9s]  info   videos 4425/5199  (2/s, ~6:10 left)
+[pipeline] [3053.7s]  info   videos 4450/5199  (2/s, ~5:58 left)
+[pipeline] [3061.9s]  info   videos 4475/5199  (2/s, ~5:45 left)
+[pipeline] [3069.2s]  info   videos 4500/5199  (2/s, ~5:32 left)
+[pipeline] [3076.7s]  info   videos 4525/5199  (2/s, ~5:20 left)
+[pipeline] [3083.6s]  info   videos 4550/5199  (2/s, ~5:07 left)
+[pipeline] [3091.4s]  info   videos 4575/5199  (2/s, ~4:55 left)
+[pipeline] [3101.5s]  info   videos 4600/5199  (2/s, ~4:43 left)
+[pipeline] [3112.4s]  info   videos 4625/5199  (2/s, ~4:31 left)
+[pipeline] [3120.7s]  info   videos 4650/5199  (2/s, ~4:19 left)
+[pipeline] [3129.4s]  info   videos 4675/5199  (2/s, ~4:07 left)
+[pipeline] [3138.5s]  info   videos 4700/5199  (2/s, ~3:55 left)
+[pipeline] [3162.6s]  info   videos 4725/5199  (2/s, ~3:44 left)
+[pipeline] [3183.2s]  info   videos 4750/5199  (2/s, ~3:33 left)
+[pipeline] [3199.0s]  info   videos 4775/5199  (2/s, ~3:22 left)
+[pipeline] [3209.8s]  info   videos 4800/5199  (2/s, ~3:10 left)
+[pipeline] [3218.3s]  info   videos 4825/5199  (2/s, ~2:57 left)
+[pipeline] [3227.6s]  info   videos 4850/5199  (2/s, ~2:45 left)
+[pipeline] [3237.9s]  info   videos 4875/5199  (2/s, ~2:33 left)
+[pipeline] [3244.8s]  info   videos 4900/5199  (2/s, ~2:21 left)
+[pipeline] [3250.4s]  info   videos 4925/5199  (2/s, ~2:09 left)
+[pipeline] [3259.1s]  info   videos 4950/5199  (2/s, ~1:57 left)
+[pipeline] [3265.2s]  info   videos 4975/5199  (2/s, ~1:45 left)
+[pipeline] [3276.2s]  info   videos 5000/5199  (2/s, ~1:33 left)
+[pipeline] [3309.7s]  info   videos 5025/5199  (2/s, ~1:22 left)
+[pipeline] [3331.6s]  info   videos 5050/5199  (2/s, ~1:11 left)
+[pipeline] [3363.0s]  info   videos 5075/5199  (2/s, ~0:59 left)
+[pipeline] [3383.6s]  info   videos 5100/5199  (2/s, ~0:48 left)
+[pipeline] [3391.2s]  info   videos 5125/5199  (2/s, ~0:36 left)
+[pipeline] [3403.0s]  info   videos 5150/5199  (2/s, ~0:24 left)
+[pipeline] [3411.6s]  info   videos 5175/5199  (2/s, ~0:12 left)
+[pipeline] [3456.2s]  info   videos 5199/5199  (2/s, ~0:00 left)
+[pipeline] [3456.2s]  info analysis: 12964 usable, 428 rejected
+[pipeline] [3456.2s]  info   rejected 237x blur
+[pipeline] [3456.2s]  info   rejected 132x no usable shots
+[pipeline] [3456.2s]  info   rejected 29x overexposed
+[pipeline] [3456.2s]  info   rejected 17x too short to analyse
+[pipeline] [3456.2s]  info   rejected 13x underexposed
+[pipeline] [3456.2s]  info 
+[pipeline] [3456.2s]  info [3/7] mapping the trip
+[pipeline] [3456.3s]  info resolving place names for 338 stops
+[pipeline] [3463.9s]  info   places 5/338
+[pipeline] [3470.0s]  info   places 10/338
+[pipeline] [3477.4s]  info   places 15/338
+[pipeline] [3494.8s] warn  geocoding unavailable (URLError); using coordinates only
+[pipeline] [3494.8s]  info   places 20/338
+[pipeline] [3494.8s]  info   places 25/338
+[pipeline] [3494.8s]  info   places 30/338
+[pipeline] [3494.8s]  info   places 35/338
+[pipeline] [3494.8s]  info   places 40/338
+[pipeline] [3494.8s]  info   places 45/338
+[pipeline] [3494.8s]  info   places 50/338
+[pipeline] [3494.8s]  info   places 55/338
+[pipeline] [3494.8s]  info   places 60/338
+[pipeline] [3494.8s]  info   places 65/338
+[pipeline] [3494.8s]  info   places 70/338
+[pipeline] [3494.8s]  info   places 75/338
+[pipeline] [3494.8s]  info   places 80/338
+[pipeline] [3494.8s]  info   places 85/338
+[pipeline] [3494.8s]  info   places 90/338
+[pipeline] [3494.8s]  info   places 95/338
+[pipeline] [3494.8s]  info   places 100/338
+[pipeline] [3494.8s]  info   places 105/338
+[pipeline] [3494.8s]  info   places 110/338
+[pipeline] [3494.8s]  info   places 115/338
+[pipeline] [3494.8s]  info   places 120/338
+[pipeline] [3494.8s]  info   places 125/338
+[pipeline] [3494.8s]  info   places 130/338
+[pipeline] [3494.8s]  info   places 135/338
+[pipeline] [3494.8s]  info   places 140/338
+[pipeline] [3494.8s]  info   places 145/338
+[pipeline] [3494.8s]  info   places 150/338
+[pipeline] [3494.8s]  info   places 155/338
+[pipeline] [3494.8s]  info   places 160/338
+[pipeline] [3494.8s]  info   places 165/338
+[pipeline] [3494.8s]  info   places 170/338
+[pipeline] [3494.8s]  info   places 175/338
+[pipeline] [3494.8s]  info   places 180/338
+[pipeline] [3494.8s]  info   places 185/338
+[pipeline] [3494.8s]  info   places 190/338
+[pipeline] [3494.8s]  info   places 195/338
+[pipeline] [3494.8s]  info   places 200/338
+[pipeline] [3494.8s]  info   places 205/338
+[pipeline] [3494.8s]  info   places 210/338
+[pipeline] [3494.8s]  info   places 215/338
+[pipeline] [3494.8s]  info   places 220/338
+[pipeline] [3494.8s]  info   places 225/338
+[pipeline] [3494.8s]  info   places 230/338
+[pipeline] [3494.8s]  info   places 235/338
+[pipeline] [3494.8s]  info   places 240/338
+[pipeline] [3494.8s]  info   places 245/338
+[pipeline] [3494.8s]  info   places 250/338
+[pipeline] [3494.8s]  info   places 255/338
+[pipeline] [3494.8s]  info   places 260/338
+[pipeline] [3494.8s]  info   places 265/338
+[pipeline] [3494.8s]  info   places 270/338
+[pipeline] [3494.8s]  info   places 275/338
+[pipeline] [3494.8s]  info   places 280/338
+[pipeline] [3494.8s]  info   places 285/338
+[pipeline] [3494.8s]  info   places 290/338
+[pipeline] [3494.8s]  info   places 295/338
+[pipeline] [3494.8s]  info   places 300/338
+[pipeline] [3494.8s]  info   places 305/338
+[pipeline] [3494.8s]  info   places 310/338
+[pipeline] [3494.8s]  info   places 315/338
+[pipeline] [3494.8s]  info   places 320/338
+[pipeline] [3494.8s]  info   places 325/338
+[pipeline] [3494.8s]  info   places 330/338
+[pipeline] [3494.8s]  info   places 335/338
+[pipeline] [3494.8s]  info resolved 338/338 place names
+[pipeline] [3495.0s]  info trip context: 20 days, 338 located stops, 22 chapters over 1137h02m
+[pipeline] [3495.0s]  info 
+[pipeline] [3495.0s]  info [4/7] preparing music
+[pipeline] [3556.0s]  info generated 'uplifting' score at 120 BPM (301 bars, 602.0s) -> score_uplifting_984.wav
+[pipeline] [3556.0s]  info 
+[pipeline] [3556.0s]  info [5/7] choosing shots and building the cut
+[pipeline] [3556.0s]  info diversity: skipped 7921 items from over-full minutes
+[pipeline] [3556.9s]  info dedupe: removed 1248 near-duplicate items
+[pipeline] [3556.9s]  info diversity: skipped 5113 items from over-full minutes
+[pipeline] [3558.8s]  info dedupe: removed 2534 near-duplicate items
+[pipeline] [3558.8s]  info diversity: skipped 2578 items from over-full minutes
+[pipeline] [3561.9s]  info dedupe: removed 3885 near-duplicate items
+[pipeline] [3561.9s]  info diversity: skipped 1085 items from over-full minutes
+[pipeline] [3565.7s]  info dedupe: removed 4754 near-duplicate items
+[pipeline] [3565.7s]  info selecting 212 items (91 clips, 121 photos) for 545s of screen time
+[pipeline] [3565.7s]  info timeline: 226 entries, 600.0s (target 600.0s)
+[pipeline] [3565.7s]  info 
+[pipeline] [3565.7s]  info [6/7] rendering
+[pipeline] [3565.7s]  info rendering 226 segments -> 10:00 @ 1920x1080
+[pipeline] [3565.7s]  info preparing still frames and title cards
+[pipeline] [3724.7s]  info   segments 5/226
+[pipeline] [3726.1s]  info   segments 10/226
+[pipeline] [3729.5s]  info   segments 15/226
+[pipeline] [3731.8s]  info   segments 20/226
+[pipeline] [3734.2s]  info   segments 25/226
+[pipeline] [3735.7s]  info   segments 30/226
+[pipeline] [3738.1s]  info   segments 35/226
+[pipeline] [3739.5s]  info   segments 40/226
+[pipeline] [3741.4s]  info   segments 45/226
+[pipeline] [3742.7s]  info   segments 50/226
+[pipeline] [3744.0s]  info   segments 55/226
+[pipeline] [3745.9s]  info   segments 60/226
+[pipeline] [3747.3s]  info   segments 65/226
+[pipeline] [3749.3s]  info   segments 70/226
+[pipeline] [3751.5s]  info   segments 75/226
+[pipeline] [3752.6s]  info   segments 80/226
+[pipeline] [3754.1s]  info   segments 85/226
+[pipeline] [3756.3s]  info   segments 90/226
+[pipeline] [3758.1s]  info   segments 95/226
+[pipeline] [3760.0s]  info   segments 100/226
+[pipeline] [3761.5s]  info   segments 105/226
+[pipeline] [3763.1s]  info   segments 110/226
+[pipeline] [3764.3s]  info   segments 115/226
+[pipeline] [3766.6s]  info   segments 120/226
+[pipeline] [3769.4s]  info   segments 125/226
+[pipeline] [3770.1s]  info   segments 130/226
+[pipeline] [3772.6s]  info   segments 135/226
+[pipeline] [3774.2s]  info   segments 140/226
+[pipeline] [3775.7s]  info   segments 145/226
+[pipeline] [3778.3s]  info   segments 150/226
+[pipeline] [3780.2s]  info   segments 155/226
+[pipeline] [3781.2s]  info   segments 160/226
+[pipeline] [3786.1s]  info   segments 165/226
+[pipeline] [3787.5s]  info   segments 170/226
+[pipeline] [3792.9s]  info   segments 175/226
+[pipeline] [3794.7s]  info   segments 180/226
+[pipeline] [3800.3s]  info   segments 185/226
+[pipeline] [3802.3s]  info   segments 190/226
+[pipeline] [3807.5s]  info   segments 195/226
+[pipeline] [3809.2s]  info   segments 200/226
+[pipeline] [3815.0s]  info   segments 205/226
+[pipeline] [3816.7s]  info   segments 210/226
+[pipeline] [3822.9s]  info   segments 215/226
+[pipeline] [3826.9s]  info   segments 220/226
+[pipeline] [3829.5s]  info   segments 225/226
+[pipeline] [3833.6s]  info   segments 226/226
+[pipeline] [3837.8s]  info extracting and normalising audio
+[pipeline] [3848.1s]  info mixing music under native audio
+[pipeline] [3853.3s]  info muxing final file
+[pipeline] [3866.3s]  info 
+[pipeline] [3866.3s]  info [7/7] writing the report
+[pipeline] [3867.7s]  info report: europe_trip.md
+[pipeline] [3867.7s]  info edl:    europe_trip.edl.json
+[pipeline] [3867.7s]  info 
+[pipeline] [3867.7s]  info ==================================================================
+[pipeline] [3867.7s]  info done in 3868s
+[pipeline] [3867.7s]  info   video:  /Users/brianyang/Desktop/video/out/europe_trip.mp4  (10:00, 1920x1080)
+[pipeline] [3867.7s]  info   report: /Users/brianyang/Desktop/video/out/europe_trip.md
+[pipeline] [3867.7s]  info ==================================================================
+
+

@@ -12,6 +12,7 @@ Two paths:
 from __future__ import annotations
 
 import math
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -397,7 +398,13 @@ def generate_music(target_seconds: float, mood: str = "uplifting",
     bpm = float(bpm or int(round((lo + hi) / 2)))
 
     # Pick a pleasant absolute key (avoid harsh keys near our tonic choices).
-    np.random.seed(seed or abs(hash(mood + str(bpm))) % (2 ** 31))
+    # Seeded from the mood, bpm and target rather than hash(). Python randomises
+    # string hashing per process, so hash() here gave every run a different
+    # score - the same library produced visibly different edits on each run, and
+    # any bug that only shows up for certain musical content became impossible
+    # to reproduce. zlib.crc32 is stable across processes and runs.
+    np.random.seed(seed or zlib.crc32(
+        f"{mood}|{bpm:.4f}|{target_seconds:.3f}".encode()) % (2 ** 31))
     key_root = tonic_pc + np.random.choice([0, 2, 4, 5, 7, 9, 11])
 
     spb = 60.0 / bpm
@@ -584,7 +591,13 @@ def prepare_music(cfg, out_dir: Path, *, library_audio: list[Path] | None = None
     want = float(cfg.music.bpm or int(round((lo + hi) / 2)))
     want = min(max(want, min(lo, hi)), max(lo, hi))
     exact, _ = quantise_tempo(want, fps)
-    path = out_dir / f"score_{cfg.music.mood}_{abs(hash(cfg.music.mood)) % 1000}.wav"
+    # Name the score after what determines its content, not a per-process hash of
+    # the mood. The old form left a different score file behind on every run,
+    # so a work directory slowly filled with orphaned WAVs that nothing
+    # referred to.
+    tag = zlib.crc32(f"{cfg.music.mood}|{exact:.4f}|{target_seconds:.3f}"
+                     .encode()) % 100000
+    path = out_dir / f"score_{cfg.music.mood}_{tag}.wav"
     m = generate_music(target_seconds, mood=cfg.music.mood, bpm=exact,
                        out_path=path)
     return _finalise(m, fps, target_seconds, on_grid=True)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import shutil
+import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -355,6 +356,11 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
         if abs(stretch - 1.0) > 1e-6:
             chain.append(f"atempo={stretch:.6f},")
 
+    # A deliberate fade to silence at the very end is normal for a recap, and
+    # the fade-in at the start is too. Both are part of the shape of the piece,
+    # not dead air, so they are left as they are. (Pulling the fade short of the
+    # end to satisfy the verifier was the wrong fix: it bends the output to fit
+    # the check rather than teaching the check what a fade looks like.)
     fade_out = max(1.5, total * 0.05)
     chain.append("aformat=sample_fmts=fltp:"
                  f"sample_rates={AUDIO_RATE}:channel_layouts=stereo,")
@@ -405,7 +411,81 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
         "-c:a", "pcm_s16le",
         str(final_wav),
     ], timeout=1800)
+    _assert_music_underneath(final_wav, music_path, total)
     return final_wav
+
+
+def _assert_music_underneath(final_wav: Path, music_path: Path,
+                             total: float) -> None:
+    """Fail loudly if the mix lost the music bed partway through.
+
+    The mix ends at exactly `total` because a terminal ``apad`` forces it, which
+    also hides the failure this catches: if anything upstream emits less than it
+    should - a filter flushing early, a truncated input - the shortfall is
+    padded with digital silence and the file still reports the right duration,
+    so every length check downstream passes. The result is a recap that plays
+    normally for most of its runtime and then goes completely silent, which is
+    exactly what happened on real media and could not be reproduced afterwards
+    in ten attempts from identical inputs.
+
+    So rather than leave it to chance, measure the tail of what was actually
+    written and refuse to ship a video with a dead ending. A music bed that
+    fades out is fine; one that is *bit-exact zero* for a noticeable stretch is
+    not, and only the written file can tell the two apart.
+    """
+    # Seek from the start rather than -ss, and discard the leading part. A
+    # -ss past the end of a short file returns no samples at all, which would
+    # make the guard pass silently on exactly the files it exists to catch -
+    # the negative control caught that.
+    tail_seconds = 4.0
+    try:
+        raw = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(final_wav),
+             "-af", f"atrim=start={max(0.0, total - tail_seconds):.4f}",
+             "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ).stdout
+    except OSError as exc:
+        log(f"could not verify the audio tail: {exc}", level="warn")
+        return
+    if not raw:
+        log("could not verify the audio tail; the mix is shorter than "
+            f"{total - tail_seconds:.1f}s", level="warn")
+        return
+    samples = np.frombuffer(raw, np.int16)
+    if samples.size == 0:
+        log("could not verify the audio tail: no samples returned",
+            level="warn")
+        return
+    # Measure the *contiguous* run of bit-exact zeros at the very end, not the
+    # fraction of zeros across the window: a 3s hole inside a 4s window reads as
+    # only 75% zero, which diluted the signal and let a real fault through.
+    trail = 0
+    for v in reversed(samples):
+        if v == 0:
+            trail += 1
+        else:
+            break
+    trailing_s = trail / 8000.0  # 8kHz
+
+    # A cutoff or padding bug produces a *long contiguous run* of exact zeros
+    # at the end. Natural fades taper but rarely produce a contiguous block of
+    # bit-exact zeros longer than ~0.3s at the very end of a 4s tail.
+    # 1.5s is the line between "a fade that happens to land exactly on zero"
+    # and "a bed that died". Calibrated against controls: 1s, 1.5s, 2s and 4s
+    # natural fades all pass; a 1s dead tail passes; 2s, 3s, 4s and 9.3s dead
+    # tails are all refused. The observed real-world fault was 9.28s.
+    if trailing_s >= 1.5:  # contiguous zero run of >= 1.5s at the tail end
+        raise ToolError(
+            f"the finished mix has a contiguous block of digital silence of "
+            f"{trailing_s:.2f}s at the end of the last {tail_seconds:.1f}s.\n"
+            f"  The music bed ({music_path.name}) likely stopped early and was "
+            f"padded with silence (duration {total:.1f}s still looks correct).\n"
+            f"  Re-run with --keep-temp to inspect {final_wav}."
+        )
+    if trailing_s >= 0.3:
+        log(f"the last {tail_seconds:.0f}s of the mix ends with "
+            f"{trailing_s:.2f}s of contiguous digital silence", level="warn")
 
 
 # ================================================================ assembling
