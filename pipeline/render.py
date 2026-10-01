@@ -670,6 +670,33 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
     return final_wav
 
 
+DEAD_TAIL_S = 1.5
+"""Contiguous bit-exact zeros at the tail that mean the bed died, not that it faded.
+
+A natural fade tapers toward zero and only reaches it at the last sample, so
+real fades produce no contiguous run at all. These thresholds were set against
+controls rather than guessed: fades of 1s, 1.5s, 2s and 4s all pass, a 1s dead
+tail passes, and dead tails of 2s, 3s, 4s and 9.3s are all refused. The fault
+seen on real media measured 9.28s.
+"""
+
+
+def trailing_silence_s(samples: np.ndarray, rate: int) -> float:
+    """Seconds of *contiguous* bit-exact zeros ending the buffer.
+
+    Contiguity is the whole point. Counting the fraction of zeros in a window
+    dilutes the signal - a 3s hole inside a 4s window is only 75% zeros, which
+    reads as less bad than the 1.5s tail it contains - and a bed that stops
+    early is precisely a hole, not a uniform quiet stretch.
+    """
+    trail = 0
+    for v in reversed(samples):
+        if v != 0:
+            break
+        trail += 1
+    return trail / float(rate)
+
+
 def _assert_music_underneath(final_wav: Path, music_path: Path,
                              total: float) -> None:
     """Fail loudly if the mix lost the music bed partway through.
@@ -715,13 +742,7 @@ def _assert_music_underneath(final_wav: Path, music_path: Path,
     # Measure the *contiguous* run of bit-exact zeros at the very end, not the
     # fraction of zeros across the window: a 3s hole inside a 4s window reads as
     # only 75% zero, which diluted the signal and let a real fault through.
-    trail = 0
-    for v in reversed(samples):
-        if v == 0:
-            trail += 1
-        else:
-            break
-    trailing_s = trail / 8000.0  # 8kHz
+    trailing_s = trailing_silence_s(samples, rate=8000)
 
     # A cutoff or padding bug produces a *long contiguous run* of exact zeros
     # at the end. Natural fades taper but rarely produce a contiguous block of
@@ -730,7 +751,7 @@ def _assert_music_underneath(final_wav: Path, music_path: Path,
     # and "a bed that died". Calibrated against controls: 1s, 1.5s, 2s and 4s
     # natural fades all pass; a 1s dead tail passes; 2s, 3s, 4s and 9.3s dead
     # tails are all refused. The observed real-world fault was 9.28s.
-    if trailing_s >= 1.5:  # contiguous zero run of >= 1.5s at the tail end
+    if trailing_s >= DEAD_TAIL_S:
         raise ToolError(
             f"the finished mix has a contiguous block of digital silence of "
             f"{trailing_s:.2f}s at the end of the last {tail_seconds:.1f}s.\n"
