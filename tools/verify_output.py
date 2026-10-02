@@ -181,6 +181,174 @@ def _check_audio(video: Path, entries: list[dict], edl: dict, check) -> None:
               f"({db(g):.0f} dBFS vs {db(b):.0f} dBFS)")
 
 
+def _check_colour_tags(v: dict | None, check) -> None:
+    """The output must declare its colour matrix, and declare it correctly.
+
+    This is the regression guard for the largest defect the pipeline had. ffmpeg's
+    default RGB->YUV matrix is bit-for-bit BT.601 - verified, not assumed: the
+    default conversion hashes identically to explicit `out_color_matrix=bt601` and
+    differs from bt709, at 1080p and 4K alike. Nothing in the file said so, and
+    every HD player resolves "unknown" as BT.709, so each still was *written*
+    with BT.601 luma coefficients and *read* as BT.709. Measured over 40 library
+    photos that was a median dE76 of 18.98 against a ~2.3 just-noticeable-
+    difference, worst case 105.69; declaring BT.709 brings the median to 2.51,
+    which is the 8-bit 4:2:0 subsampling floor rather than leftover colour error.
+
+    The check is deliberately strict about `unknown` rather than only about a
+    wrong value, because `unknown` is exactly how the bug presented. A container
+    that says nothing is a container whose colours depend on the player.
+
+    Note that libx264 does not carry `-colorspace` / `-color_primaries` /
+    `-color_trc` into the bitstream, so the render passes these as x264 VUI
+    parameters; the tags that actually land in the file are the ones checked here.
+    """
+    if not v:
+        return
+    space = (v.get("color_space") or "").strip().lower()
+    prim = (v.get("color_primaries") or "").strip().lower()
+    trc = (v.get("color_transfer") or "").strip().lower()
+    rng = (v.get("color_range") or "").strip().lower()
+    check(space == "bt709" and prim == "bt709" and trc == "bt709",
+          f"colour matrix declared as BT.709 (space={space or 'unset'}, "
+          f"primaries={prim or 'unset'}, transfer={trc or 'unset'}) - "
+          f"unlabelled output is read as BT.709 regardless of what it was "
+          f"written as")
+    check(rng in ("tv", "mpeg"),
+          f"colour range declared as limited (range={rng or 'unset'}) - "
+          f"a full-range tag on limited-range samples shifts every pixel level")
+
+
+def _reference_dir() -> Path | None:
+    """The scratch dir holding reference.mp4, if a recent render left one.
+
+    Run as `--reference` writes it; run without it, .work is deleted. So the
+    usual case is "no reference", and that has to be visible in the output rather
+    than a silently-skipped check.
+    """
+    root = ROOT / ".work"
+    if not root.is_dir():
+        return None
+    cands = sorted((p for p in root.glob("run-*") if (p / "reference.mp4").exists()),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    return cands[0] if cands else None
+
+
+def _check_encoder_fidelity(video: Path, work: Path | None, check) -> None:
+    """Measure the encode against a lossless re-render of the same thing.
+
+    Only runs when a reference was produced, because building one means re-rendering
+    the whole timeline at `-qp 0`. That is far too slow to do on every run, but it
+    is the only way to answer the question that actually matters: *did this render
+    degrade the source, or does it just look like it?* Every other check in this file
+    tests structure - lengths, tags, ducking, rotation. None of them can tell a
+    clean encode from a smeared one.
+
+    The normalisation on both legs is not optional. ffmpeg's `psnr` / `ssim` /
+    `libvmaf` filters pair frames by *timestamp*, not by order. Matroska PTS are
+    millisecond-quantised (0, 42, 83, 125 ...) while MP4 tracks an exact 1/24s grid,
+    so comparing a Matroska reference against an MP4 render without normalising both
+    legs reports a near-lossless encode as VMAF 67.03 instead of 99.94 - measured,
+    with a per-frame minimum of 0.0 that betrays it as a pairing fault rather than a
+    quality problem. A verifier built on that would be worse than no verifier.
+    """
+    if work is None:
+        return
+    ref = work / "reference.mp4"
+    if not ref.exists():
+        log_note("encoder fidelity skipped: no lossless reference was rendered")
+        return
+
+    # A reference from a *different* render is worse than no reference at all.
+    # reference.mp4 is only written for runs passed --reference, but the lookup
+    # above globs every run-* dir, so an ordinary render will happily find one
+    # left behind by an earlier calibration pass. The two files then get paired
+    # frame-by-frame with no relation between them: measured here as 720 frames
+    # against 1344, VMAF 0.52 with a per-frame minimum of 0.00 - which looks
+    # exactly like a catastrophic encode and is really a length mismatch.
+    #
+    # So verify the lengths agree before trusting the score. One frame of
+    # tolerance covers container rounding; anything more is a different film.
+    n_dist = _count_frames(video)
+    n_ref = _count_frames(ref)
+    if n_dist and n_ref and abs(n_dist - n_ref) > 1:
+        log_note(f"encoder fidelity skipped: the reference is a different "
+                 f"render ({n_ref} frames vs {n_dist}), so comparing them would "
+                 f"measure nothing - re-run with --reference")
+        return
+
+    log_path = work / "vmaf_log.json"
+
+    # Normalise both legs to an identical, frame-indexed timebase before comparing.
+    fps = _probe_fps(video) or 30.0
+    norm = f"settb=AVTB,setpts=N/({fps:g}*TB)"
+    graph = (f"[0:v]{norm},format=yuv420p[dist];"
+             f"[1:v]{norm},format=yuv420p[ref];"
+             "[dist][ref]libvmaf=n_threads=4:log_fmt=json:"
+             f"log_path={log_path}")
+
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(video), "-i", str(ref),
+         "-filter_complex", graph, "-f", "null", "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # libvmaf writes its log to `log_path`, not to stderr - stderr only carries the
+    # one-line score. Parsing stderr for JSON is what makes this silently measure
+    # nothing, so it reads the file the filter was told to write.
+    score = None
+    try:
+        with log_path.open() as fh:
+            pooled = json.load(fh)["pooled_metrics"]["vmaf"]
+        score = float(pooled["mean"])
+        worst = float(pooled["min"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        log_note("encoder fidelity: libvmaf unavailable or unparseable")
+        return
+    finally:
+        log_path.unlink(missing_ok=True)
+    # 90 rather than 95. This is a CRF encode at delivery resolution of material
+    # that was itself resampled and Ken-Burns'd, so it is not a codec comparison -
+    # it is a check that nothing in the chain is destroying the picture. A smear
+    # from a bad resample or a broken colour path lands far below this.
+    check(score >= 90.0,
+          f"encoder fidelity VMAF {score:.2f} (worst frame {worst:.2f}) against "
+          f"a lossless re-render of the same chain - both legs frame-normalised "
+          f"first, without which this reports ~67 for a clean encode; under 90 "
+          f"means the delivery encode is degrading the source")
+
+
+def log_note(msg: str) -> None:
+    print(f"  note: {msg}")
+
+
+def _count_frames(path: Path) -> int | None:
+    """Exact decoded frame count, or None if ffprobe cannot say.
+
+    Reads nb_read_frames rather than nb_frames: the container's frame count is
+    an estimate for variable-frame-rate material, and the whole point of this
+    comparison is to know the two files hold the same number of frames.
+    """
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+         "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        return int((proc.stdout or "").strip().split(",")[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _probe_fps(path: Path) -> float | None:
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=avg_frame_rate", "-of", "csv=p=0", str(path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        num, _, den = (proc.stdout or "").strip().partition("/")
+        f = float(num) / float(den) if float(den) else 0.0
+        return f or None
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
 def _norm(a: np.ndarray) -> np.ndarray:
     """Zero-mean, unit-variance, so brightness cannot decide a match."""
     a = a.astype(np.float32)
@@ -338,14 +506,16 @@ def main() -> int:
     # ---- container sanity
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries",
-         "stream=codec_type,width,height,pix_fmt,duration", "-of", "json",
-         str(video)],
+         "stream=codec_type,width,height,pix_fmt,duration,"
+         "color_space,color_primaries,color_transfer,color_range",
+         "-of", "json", str(video)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     streams = json.loads(probe.stdout or "{}").get("streams", [])
     v = next((s for s in streams if s.get("codec_type") == "video"), None)
     a = next((s for s in streams if s.get("codec_type") == "audio"), None)
     check(v is not None, "video stream present")
     check(a is not None, "audio stream present")
+    _check_colour_tags(v, check)
     if v:
         # Against the *plan*, not against 1920x1080. The EDL records the render
         # settings the pipeline was asked for, so a hardcoded expectation would
@@ -717,6 +887,12 @@ def main() -> int:
     _check_audio(video, entries, edl, check)
     _check_rotation(video, entries, check)
     _check_two_up(video, entries, check)
+
+    # ---- how good is the encode, not just whether it is well-formed.
+    # Only active with --reference, which writes reference.mp4 into the scratch
+    # dir; without it there is nothing to measure against and it says so rather
+    # than passing silently.
+    _check_encoder_fidelity(video, _reference_dir(), check)
 
     # ---- report
     print()

@@ -34,7 +34,7 @@ generative models."
 ## So: keep the render deterministic. Agentise the judgement.
 
 This project already has the right skeleton — ingest, analyse, select, arrange,
-render, verify — and 154 tests proving the render is reliable. An agent that
+render, verify — and 170 tests proving the render is reliable. An agent that
 replaces the renderer would trade a verified, reproducible film for a
 non-deterministic one and would break the whole verification approach that has
 been built up. The evidence does not support that trade.

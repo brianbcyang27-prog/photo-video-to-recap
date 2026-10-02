@@ -7,7 +7,9 @@ of RAM; this stays flat and scales to full-length timelines.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,6 +24,7 @@ from .music import MusicResult
 from .select import CutList, Entry
 from .util import (
     SEGMENT_PEAK_GB,
+    MediaInfo,
     ToolError,
     default_jobs,
     ensure_dir,
@@ -50,6 +53,114 @@ ZOOM_SS = 1
 # Resampling kernel for the video path. Lanczos rather than ffmpeg's default
 # bicubic; see the note in _video_filter for the measurement.
 SCALE_FLAGS = "lanczos"
+
+# ============================================================ colour matrix
+#
+# This is the largest quality defect the pipeline had, and it was invisible.
+#
+# ffmpeg's default RGB->YUV matrix is bit-for-bit BT.601 - verified, not assumed:
+# the SHA-256 of a default conversion is identical to explicit
+# `out_color_matrix=bt601` and differs from `bt709`, at 1080p and at 4K alike.
+# It then writes the file with no colour tags at all, and every HD player
+# resolves "unknown" as BT.709.
+#
+# So a still was *written* with BT.601 luma coefficients and *read* as BT.709.
+# Measured across the 40 photos in the library: per-photo median dE76 18.98
+# against a ~2.3 just-noticeable-difference, worst case 105.69 - and declaring
+# BT.709 brings the median to 2.51, which is the 8-bit 4:2:0 subsampling floor
+# rather than leftover colour error. 0 of 40 photos got worse.
+#
+# See docs/research/filter-quality-and-colour-harmonisation.md section 2.
+#
+# Three things follow, and all three are needed:
+#
+#   * declare the matrix on every encode, not just the stills - the segments are
+#     concatenated with `-c copy`, so a file assembled from mixed signalling
+#     carries signalling that describes none of its own frames;
+#   * declare the *input* matrix too on the video path, so genuinely BT.601
+#     source is converted properly instead of rescaled and then mislabelled;
+#   * tag the container, so correctness stops depending on the reader guessing.
+
+COLOR_MATRIX = "bt709"
+
+# libx264 does NOT propagate `-colorspace` / `-color_primaries` / `-color_trc`
+# into the bitstream. Measured on ffmpeg 9.0.1: those three flags leave
+# color_transfer and color_primaries reading back as "unknown" in ffprobe,
+# while `-color_range` and `-color_space` survive. Passing the same values as
+# x264 VUI parameters writes all four correctly, and it is the bitstream that a
+# player reads - container-level tags on an H.264 stream are not consulted in
+# preference to VUI. So the encoder parameters are the ones that matter here.
+COLOR_TAGS = (
+    "-color_range", "tv",
+    "-x264-params",
+    (f"colorprim={COLOR_MATRIX}:transfer={COLOR_MATRIX}"
+     f":colormatrix={COLOR_MATRIX}:range=tv"),
+)
+
+# The matrix is appended as its own `scale` on the still path rather than hung off
+# whichever `scale` a given chain happens to contain. Two reasons, and the second
+# is the one that matters:
+#
+#   * `_zoompan_expr` returns a bare `zoompan` when ZOOM_SS == 1 - which is exactly
+#     what a 4K render does, because a 4032px photo cannot cover a 3840px frame at
+#     2x. So the Ken Burns branch has a scale to put a flag on at 1080p and has none
+#     at 4K. A flag hung on the existing scale is silently absent from half the
+#     renders it looks present in.
+#   * With no `w:h` arguments this scale passes dimensions through and only
+#     declares the conversion, so it cannot change the frame size - and ffmpeg's
+#     RGB->YUV conversion is performed by swscale either way, so declaring it here
+#     changes the matrix and nothing else.
+STILL_MATRIX = f"scale=out_color_matrix={COLOR_MATRIX}:out_range=tv"
+
+
+def _infer_matrix(width: int, height: int) -> str:
+    """BT.709 at HD and above, BT.601 below - the rule players themselves use."""
+    return "bt709" if max(int(width), int(height)) >= 1280 else "bt601"
+
+
+def tags_for(info: MediaInfo) -> tuple[str, ...]:
+    """Bitstream tags for one segment, from what that source actually is.
+
+    A still is RGB on the way in, so its output matrix is simply BT.709. A video
+    segment is already YUV and has to be *converted*, so its tag has to describe
+    the conversion that was actually performed. Since the conversion is declared
+    as BT.709 out on every segment, that is the tag every segment carries - which
+    is also what makes the `-c copy` concat below coherent.
+    """
+    return COLOR_TAGS
+
+
+def source_matrix(info: MediaInfo) -> str:
+    """The matrix a source clip really is: its own tag if it has one, else inferred.
+
+    Phone footage almost never carries a tag - every clip in test_media reports
+    "unknown" for all four fields - so in practice this is inference rather than
+    knowledge. But it is inference from the frame size, which is precisely what a
+    player does with the same file, so the result is the picture a viewer would
+    have seen anyway. Declaring it is what stops the guess from being *silent*.
+    """
+    tag = (info.color_space or "").strip().lower()
+    if tag and tag not in ("unknown", "unspecified", "reserved"):
+        return tag
+    return _infer_matrix(info.width, info.height)
+
+
+def _source_range(info: MediaInfo) -> str:
+    """`full` only when the pixel format says so, otherwise `tv`.
+
+    ffmpeg reads an untagged stream as limited, which is right for phone footage
+    but wrong for a `yuvj420p` source - and full-range source decoded as limited
+    comes out washed out and dull, which is a visible fault and not a rounding
+    error. The `yuvj` prefix is the honest signal that the stream is full-range.
+    """
+    return "full" if (info.pix_fmt or "").lower().startswith("yuvj") else "tv"
+
+
+def _matrix_opts(info: MediaInfo) -> str:
+    """swscale options for the video path: declare both ends of the conversion."""
+    return (f":in_color_matrix={source_matrix(info)}"
+            f":in_range={_source_range(info)}"
+            f":out_color_matrix={COLOR_MATRIX}:out_range=tv")
 
 # Why a Live Photo clip is played from its first frame.
 #
@@ -348,7 +459,15 @@ def render_still(png: Path, out_mp4: Path, cfg: Pipeline, duration: float,
     cmd = [
         "ffmpeg", "-y", "-v", "error",
         "-loop", "1", "-framerate", str(FPS), "-i", str(png),
-        "-vf", f"{chain},format=yuv420p,setrange=limited",
+        # STILL_MATRIX is appended here for *both* branches rather than hung off
+        # whichever scale a branch happens to contain, because the Ken Burns
+        # branch has no scale at all once ZOOM_SS == 1 - which is exactly what a
+        # 4K render does. See the STILL_MATRIX comment.
+        #
+        # setrange=limited stays: it is a no-op on a PNG input, but it is the
+        # guard against a yuvj420p segment reaching the concat demuxer and
+        # propagating its full-range signalling to the whole film.
+        "-vf", f"{chain},{STILL_MATRIX},format=yuv420p,setrange=limited",
         "-frames:v", str(frames),
         "-an",
         "-c:v", "libx264", "-crf", str(cfg.render.crf),
@@ -357,12 +476,14 @@ def render_still(png: Path, out_mp4: Path, cfg: Pipeline, duration: float,
         "-profile:v", "high", "-level", _h264_level(),
         "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
         "-video_track_timescale", "90000",
+        *COLOR_TAGS,
         str(out_mp4),
     ]
     run(cmd, timeout=900)
 
 
-def _video_filter(width: int, height: int, fit: str, extra: str = "") -> str:
+def _video_filter(width: int, height: int, fit: str, extra: str = "",
+                  info: MediaInfo | None = None) -> str:
     """Scale one source clip to the working frame size.
 
     Always returns a fully labelled graph ending in ``[v]``. Crop and pad look
@@ -375,6 +496,11 @@ def _video_filter(width: int, height: int, fit: str, extra: str = "") -> str:
     go here rather than in a -vf of its own: ffmpeg will not apply simple and
     complex filtering to the same stream, so anything added alongside one of
     these chains has to be part of it.
+
+    `info` is the source's probe result, used to declare what colour the incoming
+    frames actually are. Without it the scale runs on ffmpeg's assumption, which
+    is BT.601 - correct only for SD, and for a still it silently bakes the wrong
+    luma coefficients into the pixels. See the colour matrix note above.
     """
     tail = f",{extra}" if extra else ""
     # Lanczos, not ffmpeg's default bicubic. This is the *video* path, and
@@ -383,7 +509,14 @@ def _video_filter(width: int, height: int, fit: str, extra: str = "") -> str:
     # here. Against the same source that measures 5.6% less edge energy, and on
     # a 4K frame the shorter effective kernel is what puts a soft look on the
     # whole timeline.
-    sc = f":flags={SCALE_FLAGS}"
+    #
+    # No `info` means no honest matrix is available, so nothing is declared and
+    # ffmpeg's BT.601 default stands. Every real caller passes it; the default
+    # exists for tests and for a caller that genuinely has nothing to probe, and
+    # the verifier check on colour_space is what catches a real render that
+    # somehow took this path.
+    mat = _matrix_opts(info) if info is not None else ""
+    sc = f":flags={SCALE_FLAGS}{mat}"
     if fit == "crop":
         return (f"[0:v]scale={width}:{height}:"
                 f"force_original_aspect_ratio=increase{sc},"
@@ -445,7 +578,7 @@ def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
         "-filter_complex",
         _video_filter(width, height, fit,
                       f"tpad=stop_mode=clone:stop_duration="
-                      f"{max(0.0, dur - play):.3f}"),
+                      f"{max(0.0, dur - play):.3f}", info),
         "-map", "[v]",
         "-frames:v", str(frames),
         "-an",
@@ -455,6 +588,7 @@ def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
         "-profile:v", "high", "-level", _h264_level(),
         "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
         "-video_track_timescale", "90000",
+        *COLOR_TAGS,
         str(out_mp4),
     ]
     run(cmd, timeout=900)
@@ -512,7 +646,7 @@ def render_video(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
         "-ss", f"{start:.3f}", "-i", str(src),
         "-t", f"{dur + 0.5:.3f}",
         "-an",
-        "-filter_complex", _video_filter(width, height, fit),
+        "-filter_complex", _video_filter(width, height, fit, info=info),
         "-map", "[v]",
         "-frames:v", str(frames),
         "-c:v", "libx264", "-crf", str(cfg.render.crf),
@@ -521,6 +655,7 @@ def render_video(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
         "-profile:v", "high", "-level", _h264_level(),
         "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
         "-video_track_timescale", "90000",
+        *COLOR_TAGS,
         str(out_mp4),
     ]
     run(cmd, timeout=900)
@@ -529,12 +664,28 @@ def render_video(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
 # ==================================================================== audio
 
 def extract_segment_audio(entry: Entry, cfg: Pipeline, out_wav: Path) -> None:
-    """Pull the segment's native audio, level-matched. Silent for stills."""
+    """Pull the segment's native audio at its own level. Silent for stills.
+
+    There is deliberately no `loudnorm` here. It used to run on every segment,
+    which was wrong three separate ways:
+
+    * With no `measured_*` inputs it is single-pass *dynamic* mode, which re-gains
+      as it goes - textbook pumping, measured at ~0.19s of drift over 120s.
+    * It normalised each shot to the same -18 LUFS, so a quiet market and a loud
+      market both arrived at -18 and the difference between them was gone. Shot
+      to shot loudness relationships are part of what makes a sequence feel like
+      a place rather than a contact sheet.
+    * Most of this project's shots are room tone measured around -37 dB mean.
+      Taking that to -18 LUFS is roughly a +19 dB lift on a noise floor, and
+      amplifying and gating a noise floor is how you get pumping hiss.
+
+    The programme is normalised once, as a whole, in `_normalise_programme`.
+    """
     dur = max(0.08, entry.duration)
     item = entry.item
 
     fade = "afade=t=in:st=0:d=0.06,areverse,afade=t=in:st=0:d=0.10,areverse"
-    chain = f"loudnorm=I=-18:TP=-1.5:LRA=11,{fade},aformat=sample_fmts=s16:sample_rates={AUDIO_RATE}:channel_layouts=stereo"
+    chain = f"{fade},aformat=sample_fmts=s16:sample_rates={AUDIO_RATE}:channel_layouts=stereo"
 
     def silence() -> None:
         run(["ffmpeg", "-y", "-v", "error",
@@ -591,7 +742,7 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
                       music: MusicResult | None = None) -> Path:
     """Concat per-segment audio, then duck the music underneath it."""
     content_wav = work / "content_audio.wav"
-    final_wav = work / "final_audio.wav"
+    mixed_wav = work / "mixed_audio.wav"
 
     list_file = work / "audio_concat.txt"
     list_file.write_text(
@@ -647,9 +798,13 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
     pin = f"apad,atrim=end={total:.6f},asetpts=N/SR/TB"
 
     if cfg.music.duck:
+        # knee=6, not ffmpeg's unset default of 2.82843. A 2.83 knee is nearly a
+        # hard knee, and a hard knee on a music bed at 6:1 is an audible step
+        # rather than a transition. 6 is in the recommended band for a sidechain
+        # of this kind and turns the step back into a ramp.
         mix = (
             f"{music_filter};[0:a]{content_fmt};"
-            f"[mus][cont]sidechaincompress=threshold=0.035:ratio=6:"
+            f"[mus][cont]sidechaincompress=threshold=0.035:ratio=6:knee=6:"
             f"attack=18:release={release_ms}:makeup=1[ducked];"
             # sidechaincompress has no ceiling of its own, so a loud mix (a
             # driving 'energetic' score under already-hot source audio) can land
@@ -673,10 +828,109 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
         "-filter_complex", mix,
         "-map", "[mixed]",
         "-c:a", "pcm_s16le",
-        str(final_wav),
+        str(mixed_wav),
     ], timeout=1800)
+
+    # Normalise the assembled programme, once, two-pass. See
+    # _normalise_programme for why this is a separate stage rather than a filter
+    # in the graph above.
+    final_wav = _normalise_programme(mixed_wav, cfg)
     _assert_music_underneath(final_wav, music_path, total)
     return final_wav
+
+
+def _measure_loudness(path: Path) -> dict[str, float] | None:
+    """Pass 1 of loudnorm: ask ffmpeg what the programme actually measures."""
+    proc = run(["ffmpeg", "-nostats", "-hide_banner", "-i", str(path),
+                "-af", "loudnorm=I=-18:TP=-1.5:LRA=11:print_format=json",
+                "-f", "null", "-"], check=False)
+    blob = proc.stderr or ""
+    start = blob.rfind("{")
+    end = blob.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(blob[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    out: dict[str, float] = {}
+    for key in ("input_i", "input_lra", "input_tp", "input_thresh",
+                "target_offset"):
+        try:
+            out[key] = float(data[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out or None
+
+
+def _normalise_programme(mixed_wav: Path, cfg: Pipeline) -> Path:
+    """Loudness-normalise the finished programme, as a whole, in two passes.
+
+    This is the stage that the per-segment `loudnorm` used to be, and moving it
+    here changes three things at once:
+
+    * Shot-to-shot loudness relationships survive. Normalising each segment
+      separately made a quiet market and a loud market both arrive at -18 LUFS,
+      which is part of why the edit felt flat: the *differences between places*
+      were being deleted before anyone heard them.
+    * It is a static gain rather than a moving one. Feeding the measured values
+      back in puts loudnorm on its linear path, so the gain is computed once from
+      the whole programme and applied evenly - no re-gaining between frames.
+    * Room tone is no longer amplified on its own terms. Most shots here are
+      ambience around -37 dB mean; as part of a programme it gets the same
+      treatment as everything else instead of a ~19 dB lift.
+
+    Two passes because one pass in dynamic mode is exactly the pumping that was
+    removed. If the measurement pass cannot be parsed, the mix is left as it is:
+    a slightly hot or quiet recap is recoverable, a truncated one is not.
+    """
+    target_i, target_tp, target_lra = -18.0, -1.5, 11.0
+    measured = _measure_loudness(mixed_wav)
+    if measured is None:
+        log("could not measure programme loudness; leaving the mix un-normalised",
+            level="warn")
+        return mixed_wav
+
+    applied = (
+        f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"
+        f":measured_I={measured['input_i']:.2f}"
+        f":measured_LRA={measured['input_lra']:.2f}"
+        f":measured_TP={measured['input_tp']:.2f}"
+        f":measured_thresh={measured['input_thresh']:.2f}"
+        f":offset={measured.get('target_offset', 0.0):.2f}"
+        ":linear=true:print_format=summary"
+    )
+    final = mixed_wav.with_name("final_audio.wav")
+    proc = run(["ffmpeg", "-y", "-v", "info", "-i", str(mixed_wav),
+                "-af", applied, "-c:a", "pcm_s16le", str(final)],
+               check=False)
+    if proc.returncode != 0 or not final.exists():
+        log("programme normalisation failed; using the un-normalised mix",
+            level="warn")
+        return mixed_wav
+    return final
+
+
+def measure_true_peak(path: Path) -> float | None:
+    """Measured true peak in dBTP, from the encoded file.
+
+    `alimiter` is a *sample*-peak limiter with no oversampling, so the -1 dBTP
+    that EBU R128, ATSC A/85, AES TD1008 and Netflix all specify was never
+    actually guaranteed - and AAC encoding creates inter-sample peaks above the
+    sample peak on top of that. So rather than trust the graph, measure the file
+    that will actually ship. Returns None when it cannot be read, so callers can
+    decide whether an unreadable measurement is fatal.
+    """
+    proc = run(["ffmpeg", "-v", "info", "-i", str(path), "-af", "ebur128=peak=true",
+                "-f", "null", "-"], check=False)
+    best: float | None = None
+    for line in (proc.stderr or "").splitlines():
+        m = re.search(r"^\s*Peak:\s*(-?\d+(?:\.\d+)?)", line)
+        if m:
+            val = float(m.group(1))
+            # ebur128 prints a running maximum; the final value is the answer.
+            best = val if best is None else max(best, val)
+    return best
 
 
 DEAD_TAIL_S = 1.5
@@ -826,7 +1080,8 @@ def _segment_peak_gb(width: int, height: int) -> float:
 
 
 def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
-           work: Path, out_path: Path, *, keep_temp: bool = False) -> RenderResult:
+           work: Path, out_path: Path, *, keep_temp: bool = False,
+           reference: bool = False) -> RenderResult:
     prepare_render(cfg)
     ensure_dir(work)
     seg_dir = ensure_dir(work / "segments")
@@ -979,6 +1234,29 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
     silent = work / "picture.mp4"
     concat_segments(good, silent, work)
 
+    # ---- optional lossless reference, for the verifier to measure against.
+    #
+    # The encode being measured is already the one thing every check in
+    # verify_output.py cannot currently see: all of them test structure - lengths,
+    # tags, ducking, rotation - and none of them can tell a clean encode from a
+    # smeared one. Re-running the *same* segment encode at `-qp 0` gives a
+    # bit-exact rendering of the same filter chain, so VMAF against it isolates
+    # encode loss from everything upstream.
+    #
+    # It re-encodes the assembled picture rather than re-rendering segments, which
+    # keeps it to one extra pass instead of redoing the whole timeline. That is
+    # deliberate and it is also the limit of what this measures: it scores the
+    # delivery encode, not the resampling and Ken Burns that came before it.
+    if reference:
+        log("encoding a lossless reference for the verifier")
+        ref = work / "reference.mp4"
+        run(["ffmpeg", "-y", "-v", "error", "-i", str(silent),
+             "-c:v", "libx264", "-qp", "0", "-preset", "veryslow",
+             "-pix_fmt", "yuv420p",
+             "-x264-params", "colorprim=bt709:transfer=bt709:"
+                             "colormatrix=bt709:range=tv",
+             str(ref)], timeout=3600)
+
     # ---- sound
     audio = None
     if music_path and music_path.exists():
@@ -995,6 +1273,11 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
 
     # ---- mux
     log("muxing final file")
+    # The colour tags belong here as well as on every segment. This is a
+    # `-c copy` concat, so the picture is never re-read: the container inherits
+    # whatever the first segment declared, and if segments disagree the result is
+    # worse than no tag at all. Declaring the truth at the point of assembly is
+    # what makes it true for the whole file.
     if audio:
         run(["ffmpeg", "-y", "-v", "error",
              "-i", str(silent), "-i", str(audio),
@@ -1002,11 +1285,28 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
              "-c:v", "copy", "-c:a", "aac",
              "-b:a", cfg.render.audio_bitrate, "-ar", str(AUDIO_RATE),
              "-movflags", "+faststart",
+             *COLOR_TAGS,
              str(out_path)], timeout=1800)
     else:
         run(["ffmpeg", "-y", "-v", "error", "-i", str(silent),
-             "-c", "copy", "-movflags", "+faststart", str(out_path)],
+             "-c", "copy", "-movflags", "+faststart",
+             *COLOR_TAGS,
+             str(out_path)],
             timeout=1800)
+
+    if reference:
+        measured = measure_true_peak(out_path)
+        if measured is None:
+            log("could not measure true peak on the finished file", level="warn")
+        elif measured > -0.8:
+            # Measured, not assumed: alimiter is a sample-peak limiter and AAC
+            # adds inter-sample peaks on top, so this was never guaranteed by the
+            # graph. -0.8 is the verifier's own ceiling, so warning here means
+            # the verifier will fail - which is the correct outcome, but it is
+            # better to say so at the point of the cause.
+            log(f"true peak measured at {measured:.2f} dBTP, over the -0.8 the "
+                f"verifier allows; the mix is louder than the graph intends",
+                level="warn")
 
     final_duration = _probe_duration(out_path)
     result = RenderResult(video=out_path, duration=final_duration,

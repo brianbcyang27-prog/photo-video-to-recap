@@ -123,6 +123,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     o.add_argument("--jobs", type=int, default=0, help="parallel workers (0 = auto)")
     o.add_argument("--quality", type=int, default=18,
                    help="x264 CRF; lower is better quality and bigger file")
+    o.add_argument("--reference", action="store_true",
+                   help="also write a lossless reference.mp4 into the scratch "
+                        "dir, so tools/verify_output.py can measure the encode "
+                        "against it with VMAF (costs one extra pass)")
     return p.parse_args(argv)
 
 
@@ -378,8 +382,16 @@ def main(argv: list[str] | None = None) -> int:
     # ----------------------------------------------------------- render
     log("")
     log("[6/7] rendering")
+    # --reference implies keeping the scratch dir. render() writes
+    # reference.mp4 into work/ and then rmtree's work/ when keep_temp is false,
+    # so the verifier found no reference and silently skipped the VMAF check
+    # even on a run that asked for it.
+    keep_temp = cfg.keep_temp or a.keep_temp or a.reference
     result = render(cut, cfg, music.path, work, final,
-                    keep_temp=cfg.keep_temp or a.keep_temp)
+                    keep_temp=keep_temp,
+                    reference=a.reference)
+    if a.reference:
+        log(f"  lossless reference: {work / 'reference.mp4'}")
 
     # ----------------------------------------------------------- report
     log("")

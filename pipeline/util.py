@@ -179,6 +179,16 @@ class MediaInfo:
     rotation: int = 0
     codec: str = ""
     pix_fmt: str = ""
+    # Colour signalling, exactly as the container carries it. Kept because the
+    # render path needs to *declare* a matrix rather than inherit whatever ffmpeg
+    # guesses, and the only way to know the real answer is to read it here.
+    # These are empty strings far more often than not - every clip in test_media
+    # reports "unknown" for all four - which is precisely the condition that made
+    # the render ship untagged BT.601 luma; see the note in render.py.
+    color_space: str = ""
+    color_primaries: str = ""
+    color_transfer: str = ""
+    color_range: str = ""
     # EXIF / filesystem
     captured: float = 0.0          # unix timestamp (true UTC); 0 if unknown
     captured_source: str = "mtime"
@@ -282,6 +292,10 @@ def probe(path: Path, kind: str) -> MediaInfo:
             )
             info.codec = stream.get("codec_name") or ""
             info.pix_fmt = stream.get("pix_fmt") or ""
+            info.color_space = stream.get("color_space") or ""
+            info.color_primaries = stream.get("color_primaries") or ""
+            info.color_transfer = stream.get("color_transfer") or ""
+            info.color_range = stream.get("color_range") or ""
             rot = 0
             for sd in stream.get("side_data_list", []) or []:
                 if "rotation" in sd:

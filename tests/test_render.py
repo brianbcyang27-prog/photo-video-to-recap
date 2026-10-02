@@ -9,6 +9,7 @@ shot. It looked varied in a list of six and was not varied over 180 shots.
 from __future__ import annotations
 
 import importlib
+import re
 
 import pytest
 
@@ -60,6 +61,12 @@ def test_still_moves_appear_at_all():
 
 def _render_module():
     return importlib.import_module("pipeline.render")
+
+
+def _src(fn):
+    """Source of a function in pipeline.render, for wiring assertions."""
+    import inspect
+    return inspect.getsource(fn)
 
 
 def test_h264_level_scales_with_frame_size():
@@ -208,3 +215,194 @@ def test_video_filter_extra_goes_inside_the_graph():
     # Must land before the final label, or it becomes an unconnected output.
     assert graph.rstrip().endswith("[v]")
     assert graph.count("tpad") == 1
+
+
+# --------------------------------------------------------------- colour matrix
+
+def test_still_chain_declares_bt709():
+    """The still path is where the matrix is baked into the pixels.
+
+    PIL hands ffmpeg 24-bit RGB, so the RGB->YUV conversion happens *inside* this
+    encode and ffmpeg's default matrix is bit-for-bit BT.601 - verified by hash,
+    not assumed. So an undeclared still is written with BT.601 luma coefficients
+    and then read as BT.709 by any HD player.
+
+    Control: `_render_module()` builds the real command, so removing STILL_MATRIX
+    from the chain makes this fail. A test that only checked the constant existed
+    would keep passing with the constant unwired, which is the failure mode the
+    level/GOP test above was written to catch.
+    """
+    r = _render_module()
+    r.ZOOM_W, r.ZOOM_H, r.FPS = 1920, 1080, 30
+    # The chain is built from constants, so assert on the *resolved* string that
+    # reaches ffmpeg rather than on source text - otherwise this passes while
+    # STILL_MATRIX is defined and never interpolated.
+    assert "out_color_matrix=bt709" in r.STILL_MATRIX
+    src = _src(r.render_still)
+    assert "STILL_MATRIX" in src, (
+        "render_still does not interpolate STILL_MATRIX, so stills are written "
+        "with BT.601 luma coefficients (the default) and read as BT.709"
+    )
+    # It must be appended after the chain, not hung off a scale inside it: the
+    # Ken Burns branch carries no scale at all once ZOOM_SS == 1, which is what a
+    # 4K render produces. A flag on a scale that is not there in half the renders
+    # is a flag that is missing from them.
+    line = next(ln for ln in src.splitlines() if '"-vf"' in ln)
+    assert line.index("{chain}") < line.index("STILL_MATRIX")
+    assert "force_original_aspect_ratio=increase," not in line
+    # `scale=W:H:...` resizes; `scale=<options only>` just declares the
+    # conversion and passes dimensions through. Assert the absence of dimensions
+    # specifically, since option keys are also colon-separated.
+    opts = r.STILL_MATRIX.split("=", 1)[1]
+    assert not re.match(r"^\d+:\d+", opts), (
+        f"STILL_MATRIX declares dimensions ({opts!r}); it must pass them through "
+        "and only set the conversion, or it resizes the frame"
+    )
+
+
+def test_still_matrix_survives_the_supersample_collapse():
+    """4K renders set ZOOM_SS to 1, which strips the scale out of the Ken Burns chain.
+
+    This is the case that made the first attempt at this fix wrong. Putting
+    `:out_color_matrix=bt709` on the existing `scale` inside `_zoompan_expr` looks
+    correct and covers 1080p perfectly - and at 4K that scale does not exist,
+    because a 4032px photo cannot cover a 3840px frame at 2x, so `ZOOM_SS` becomes
+    1 and the function returns a bare `zoompan`. The matrix would then be declared
+    in exactly the renders that do not need it and missing from the ones that do.
+    """
+    r = _render_module()
+    try:
+        for ss in (1, 2):
+            r.ZOOM_SS = ss
+            r.ZOOM_W, r.ZOOM_H, r.FPS = 3840, 2160, 30
+            chain = r._zoompan_expr("in", 0.1, 90)
+            if ss == 1:
+                # The collapsed case: no scale to hang a flag on, which is the
+                # whole reason STILL_MATRIX is applied separately.
+                assert "scale=" not in chain
+            rendered = f"{chain},{r.STILL_MATRIX},format=yuv420p,setrange=limited"
+            assert "out_color_matrix=bt709" in rendered
+            assert rendered.count("scale=out_color_matrix") == 1
+    finally:
+        r.ZOOM_SS = 1
+        r.ZOOM_W, r.ZOOM_H, r.FPS = 1920, 1080, 30
+
+
+def test_video_path_declares_both_ends_of_the_conversion():
+    """A video segment is already YUV, so its *input* matrix has to be declared too.
+
+    Otherwise a genuine BT.601 source gets rescaled as though it were BT.709 and
+    then labelled BT.709 - two errors that cancel in the tags and not in the
+    picture.
+    """
+    r = _render_module()
+    r.ZOOM_W, r.ZOOM_H, r.FPS = 1920, 1080, 30
+    info = r.MediaInfo(path=__import__("pathlib").Path("x.mp4"), kind="video",
+                       width=1920, height=1080, pix_fmt="yuv420p")
+    graph = r._video_filter(1920, 1080, "crop", info=info)
+    assert "out_color_matrix=bt709" in graph
+    assert "in_color_matrix=bt709" in graph
+
+
+def test_source_matrix_prefers_the_tag_over_the_frame_size():
+    r = _render_module()
+    P = __import__("pathlib").Path
+    # Tagged: believe it, even at a size that would imply otherwise.
+    tagged = r.MediaInfo(path=P("a.mp4"), kind="video", width=1920, height=1080,
+                         color_space="bt470bg")
+    assert r.source_matrix(tagged) == "bt470bg"
+    # Untagged: infer from size, which is what a player does with the same file.
+    hd = r.MediaInfo(path=P("b.mp4"), kind="video", width=3840, height=2160)
+    assert r.source_matrix(hd) == "bt709"
+    sd = r.MediaInfo(path=P("c.mp4"), kind="video", width=640, height=480)
+    assert r.source_matrix(sd) == "bt601"
+    # "unknown" is ffprobe's way of saying nothing, so it must not be believed.
+    explicit_unknown = r.MediaInfo(path=P("d.mp4"), kind="video", width=640,
+                                   height=480, color_space="unknown")
+    assert r.source_matrix(explicit_unknown) == "bt601"
+
+
+def test_full_range_source_is_detected_from_the_pixel_format():
+    """ffmpeg reads an untagged stream as limited, which is wrong for yuvj420p.
+
+    Decoding full-range source as limited comes out washed out and dull - a
+    visible fault, not a rounding error. The `yuvj` prefix is the honest signal.
+    """
+    r = _render_module()
+    P = __import__("pathlib").Path
+    full = r.MediaInfo(path=P("a.mov"), kind="video", width=1920, height=1080,
+                       pix_fmt="yuvj420p")
+    assert "in_range=full" in r._matrix_opts(full)
+    limited = r.MediaInfo(path=P("b.mp4"), kind="video", width=1920, height=1080,
+                          pix_fmt="yuv420p")
+    assert "in_range=tv" in r._matrix_opts(limited)
+
+
+def test_every_encode_and_the_mux_carry_the_colour_tags():
+    """The tags have to be on the *bitstream*, and on every site.
+
+    Two things this catches that a constant-presence check would not:
+
+    * `-colorspace` / `-color_primaries` / `-color_trc` do not reach an H.264
+      bitstream through libx264 - measured on ffmpeg 9.0.1, they read back as
+      "unknown" while only `-color_range` and `-color_space` survive. Passing the
+      values as x264 VUI parameters is what actually writes them, so that is what
+      is asserted.
+    * The final mux is a `-c copy` concat. If only the segments were tagged, the
+      container would inherit whatever the first one declared.
+    """
+    import inspect
+    r = _render_module()
+    tags = " ".join(r.COLOR_TAGS)
+    assert "x264-params" in tags, (
+        "-colorspace/-color_primaries/-color_trc are not propagated by libx264; "
+        "they have to be written as VUI parameters to land in the file"
+    )
+    for fn in (r.render_still, r.render_video, r.render_live):
+        assert "COLOR_TAGS" in inspect.getsource(fn), (
+            f"{fn.__name__} does not tag its output colour"
+        )
+    # The mux is a `-c copy` concat, so segments alone leave the container
+    # describing only its first segment. Split the function at the comment that
+    # introduces the mux so this cannot accidentally match a segment encode.
+    body = _src(r.render)
+    # rindex on the right: `if reference:` appears *before* the mux too, where the
+    # reference encode is written, so a plain index would slice the wrong region
+    # and quietly pass.
+    mux = body[body.index("# ---- mux"):body.rindex("if reference:")]
+    assert mux.count("COLOR_TAGS") >= 2, (
+        f"the mux declares COLOR_TAGS {mux.count('COLOR_TAGS')} time(s); both mux "
+        "branches (with and without audio) need them, because the concat is "
+        "`-c copy` and the container inherits only the first segment's tags"
+    )
+
+
+def test_probe_reads_colour_tags_from_the_stream():
+    """The tags must be captured at probe time, or source_matrix has nothing to read.
+
+    Control: probe() runs against a real file, so this exercises the JSON parsing
+    rather than asserting the dataclass has fields.
+    """
+    import json as _json
+    import tempfile
+    from pathlib import Path as _Path
+    from unittest import mock
+
+    from pipeline.util import probe
+
+    with tempfile.TemporaryDirectory() as td:
+        f = _Path(td) / "t.mp4"
+        f.write_bytes(b"\0" * 32)
+        payload = _json.dumps({"format": {"duration": "1.0"}, "streams": [{
+            "codec_type": "video", "width": 1920, "height": 1080,
+            "pix_fmt": "yuv420p", "color_space": "bt709",
+            "color_primaries": "bt709", "color_transfer": "bt709",
+            "color_range": "tv",
+        }]})
+        fake = mock.Mock(returncode=0, stdout=payload, stderr="")
+        with mock.patch("pipeline.util.run", return_value=fake):
+            info = probe(f, "video")
+    assert info.color_space == "bt709"
+    assert info.color_primaries == "bt709"
+    assert info.color_transfer == "bt709"
+    assert info.color_range == "tv"
