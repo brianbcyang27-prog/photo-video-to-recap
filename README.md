@@ -252,8 +252,10 @@ to about −14 LUFS with true peak kept under −1 dBTP.
 ./.venv/bin/python tools/verify_output.py out/trip_recap.mp4
 ```
 
-This measures the rendered file rather than trusting the plan — 21 checks. It
-verifies that the render matches the cut list, that picture and sound end
+This measures the rendered file rather than trusting the plan — 27 checks. It
+verifies that the *picture* runs for as long as the cut list says it should (on
+the video stream, not the container, which reports whichever stream is longer and
+will happily cover for a picture that stopped early), that picture and sound end
 together, resolution and pixel format, integrated loudness and true peak, that
 the soundtrack never goes silent, that title cards actually contain legible
 text, that stills really move and move *smoothly*, that portrait shots were
@@ -273,7 +275,7 @@ This renders each case for real and verifies the file, so it takes a while.
 ## Tests
 
 ```bash
-./.venv/bin/python -m pytest tests -q      # 186 tests, about 2.8s
+./.venv/bin/python -m pytest tests -q      # 220 tests, about 3.8s
 ```
 
 No ffmpeg, no media on disk, no network — the suite is pure logic, so a failure
@@ -358,7 +360,7 @@ tools/
   verify_output.py        measures a rendered file against its plan
   sweep.sh                renders and verifies every option combination
   clean.sh                clears scratch space between runs
-tests/                 186 tests, no media required
+tests/                 220 tests, no media required
 ```
 
 ## Tuning

@@ -23,8 +23,6 @@ from PIL import Image
 # on exactly the files the pipeline handled fine.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.quality import (  # noqa: E402
-    _load_via_sips,
-    exif_orientation,
     load_image,
 )
 
@@ -397,77 +395,6 @@ def _small(a: np.ndarray, n: int = 64) -> np.ndarray:
 SHARP = 0.65
 
 
-def _check_rotation(video: Path, entries: list[dict], check) -> None:
-    """Photos must appear the way up the camera recorded them.
-
-    The finished edit shipped with 106 of its 141 photos lying on their side
-    and every other check still passed. Nothing about a sideways photo is
-    detectably wrong to a luma, edge or loudness measurement - it is simply the
-    wrong picture - so nothing here could have noticed.
-
-    So this compares the frame actually on screen against both hypotheses for
-    the source: the orientation the camera recorded, and the pixels as stored,
-    which for a quarter-turn is exactly the other way round. The recorded one
-    has to match better.
-
-    Which strip of the frame to compare matters. Sampling the middle of a
-    two-up spread catches the tail of one photo and the head of its partner,
-    and neither hypothesis then matches anything: that is what made this check
-    report a portrait photo as sideways when it was not. Each photo is compared
-    against the half it actually occupies.
-    """
-    good = bad = tested = 0
-    for e in entries:
-        if tested >= 8:
-            break
-        if e["type"] != "photo":
-            continue
-        # (path, the slice of the frame it should occupy)
-        #
-        # A spread puts its two photos in the left and right halves. A lone
-        # portrait shot with blur-fill puts its photo in the *middle*, with
-        # blurred sides either side of it. Sampling the left half of a lone
-        # shot therefore measures mostly blur, which is how three correct
-        # photos came to be reported as sideways here.
-        if e.get("pair"):
-            candidates = [(e.get("source"), (0.02, 0.47)),
-                          (e["pair"], (0.53, 0.98))]
-        else:
-            candidates = [(e.get("source"), (0.30, 0.70))]
-        for src_name, (x0, x1) in candidates:
-            if not src_name:
-                continue
-            src = Path(src_name)
-            if not src.exists():
-                continue
-            try:
-                if exif_orientation(src) < 5:   # no quarter turn to confuse us
-                    continue
-            except Exception:
-                continue
-            upright = load_image(src)
-            stored = _load_via_sips(src)
-            if upright is None or stored is None:
-                continue
-            frame = luma(grab(video, e["start"] + min(0.4, e["duration"] / 2)))
-            if frame.shape[0] < 100:
-                continue
-            h, w = frame.shape
-            band = _norm(_small(frame[int(h * 0.15):int(h * 0.85),
-                                    int(w * x0):int(w * x1)]))
-            su = _norm(_small(np.asarray(upright.convert("L"))))
-            ss = _norm(_small(np.asarray(stored.convert("L"))))
-            tested += 1
-            if float((band * su).mean()) > float((band * ss).mean()):
-                good += 1
-            else:
-                bad += 1
-    if tested:
-        check(bad == 0,
-              f"quarter-turned photos shown upright, not on their side: "
-              f"{good}/{tested} ({bad} sideways)")
-
-
 def _check_two_up(video: Path, entries: list[dict], check) -> None:
     """A two-up spread has to show two photos, not one photo and an empty half.
 
@@ -521,9 +448,14 @@ def main() -> int:
         results.append((ok, msg))
 
     planned = sum(e["duration"] for e in entries)
-    check(abs(total - planned) <= 0.15,
-          f"rendered length {total:.2f}s matches the {planned:.2f}s plan "
-          f"(within 0.15s)")
+    # The length of the *picture* is checked against the plan further down, on
+    # the video stream rather than the container. That distinction is the whole
+    # point: a container reports the longest stream in it, so an audio track one
+    # beat long covers for a picture that stopped early. On the trip render that
+    # is exactly what happened - the container read 599.84s against a 599.86s
+    # plan and passed, while the video stream was 599.26s, 35 frames short, with
+    # every shot after the first shortfall landing up to 0.58s ahead of its own
+    # sound.
     if abs(planned - edl["target"]) > 1.5:
         check(True,
               f"NOTE: plan is {planned:.0f}s but {edl['target']:.0f}s was "
@@ -630,6 +562,20 @@ def main() -> int:
               f"{need_fs:,} needed for {want_w}x{want_h}"
               if level else "H.264 level tag is missing")
         check(v.get("pix_fmt") == "yuv420p", f"pix_fmt {v.get('pix_fmt')} (playable everywhere)")
+    if v:
+        # How long the picture runs, against how long it was planned to run.
+        # This is a per-shot arithmetic question - does every shot render the
+        # frames it was allotted - and it is only answerable on the video
+        # stream. A shot can come up short without error: the encoder stops at
+        # end of file when asked for more frames than its source holds, and the
+        # concat's `-frames:v` is a ceiling rather than a promise. Every shortfall
+        # then pushes the rest of the film early against audio placed by the
+        # EDL's timings, so a fraction of a second here is a sync fault, not a
+        # rounding note.
+        vd = float(v.get("duration") or 0)
+        check(abs(vd - planned) <= 0.15,
+              f"picture runs for {vd:.2f}s against the {planned:.2f}s plan "
+              f"(within 0.15s)")
     if v and a:
         vd = float(v.get("duration") or 0)
         ad = float(a.get("duration") or 0)
@@ -925,8 +871,37 @@ def main() -> int:
 
     # ---- native audio: loudness, continuity, and whether ducking happened
     _check_audio(video, entries, edl, check)
-    _check_rotation(video, entries, check)
     _check_two_up(video, entries, check)
+
+    # There is deliberately no check here that photos appear the right way up.
+    # There was one, written because a finished edit shipped with 106 of its 141
+    # photos lying on their side and every other check passed. Three ways of
+    # measuring it from the frame were tried and all three failed to decide, and
+    # the measurements are worth keeping because the reasoning looks sound:
+    #
+    #   * Correlating the frame against the two orientations, in the strip the
+    #     composition put the photo in. Every still is a window onto a larger
+    #     canvas, pushed in and panned, so the photo is not where it was put:
+    #     a shot at zoom 0.142 matched its own half at +0.061, and two upright
+    #     photos in a spread were reported as sideways.
+    #   * The same, searching every strip instead of assuming one. That removed
+    #     the false alarms and removed the teeth with them: with the frame
+    #     rotated 90 degrees, so the sideways reading was plainly true, it still
+    #     called the photo upright on 3 of 5.
+    #   * The vertical-to-horizontal edge-energy ratio, which a crop and a pan
+    #     barely disturb and a quarter turn inverts. This is the best of the
+    #     three and it is still not a measurement of orientation. On the trip
+    #     render - verified upright, by window search, on the same frames - it
+    #     read 3 of 8 photos the right way up, and rotating a frame merely
+    #     negated its answer. A rule that condemns correct output and cannot
+    #     distinguish it from the fault it was written for is worse than no
+    #     rule, because it teaches the reader to ignore the checks.
+    #
+    # Orientation is decided where it is decidable instead: the transform is a
+    # function of eight integers and is pinned for all eight, along with the
+    # probe that reads the tag, the renderer call that forwards it, and the
+    # loader branch that has to honour it. See tests/test_orientation.py, whose
+    # 31 tests include the three sabotages that each made this fault return.
 
     # ---- how good is the encode, not just whether it is well-formed.
     # Only active with --reference, which writes reference.mp4 into the scratch

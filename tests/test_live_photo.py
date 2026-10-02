@@ -248,3 +248,141 @@ def test_the_push_continues_from_the_clips_last_frame_not_the_still(tmp_path,
         "video frames are already upright; applying the still's EXIF rotation "
         "would tilt the push"
     )
+
+
+def test_a_shortfall_below_the_bar_still_produces_every_frame(tmp_path,
+                                                              monkeypatch):
+    """The single-pass shortcut is only safe if the clip can fill the slot.
+
+    `TAIL_MIN` exists so that a leftover of a few frames does not cost two extra
+    encodes. But a leftover that small does not prove the clip was long enough:
+    it may simply be short. When that happened the single pass asked ffmpeg for
+    the slot's frame count from a clip that did not have them, and the encoder
+    stopped at end of file - which is not an error, just a short shot.
+
+    Measured over the trip cut, six shots took that branch and came out 12, 10,
+    10, 8, 1 and 1 frames short. The picture ended 0.58s before the sound, and
+    because audio is placed by the EDL's timings, each of those six also played
+    ahead of its own ambient audio.
+
+    Counted in frames rather than measured in seconds, because a duration
+    comparison is what let this through: a shot 5 frames short still measures
+    within a tenth of a second of its slot.
+    """
+    monkeypatch.setattr(render, "FPS", 30)
+    monkeypatch.setattr(render, "ZOOM_W", 640)
+    monkeypatch.setattr(render, "ZOOM_H", 360)
+    monkeypatch.setattr(render, "ZOOM_SS", 1)
+
+    slot, clip_seconds = 1.15, 1.0
+    tail = slot - clip_seconds
+    assert tail < render.TAIL_MIN, (
+        f"this test needs a leftover under the bar to reach the branch in "
+        f"question; {tail:.3f}s is not under {render.TAIL_MIN}s"
+    )
+
+    mov = _moving_clip(tmp_path / "IMG_0004.MOV", seconds=clip_seconds)
+    out = tmp_path / "seg.mp4"
+    render.render_live(_entry(mov, slot), render.Pipeline(), out, sw=640, sh=360)
+
+    want = round(slot * 30)
+    got = int(subprocess.run(
+        ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+         "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(out)],
+        check=True, capture_output=True, text=True).stdout.strip())
+    assert got >= want, (
+        f"a {slot:.2f}s slot is {want} frames and only {got} were produced: the "
+        f"clip ran out {want - got} frames short and nothing covered the gap"
+    )
+
+
+def test_a_clip_long_enough_for_its_slot_still_uses_one_pass(tmp_path,
+                                                              monkeypatch):
+    """The other side of the same condition, so the fix cannot be over-applied.
+
+    Rewriting the guard as "always take the push path" would also stop the frames
+    being lost, and would cost two extra encodes on every Live Photo shot in the
+    film - and would append a push to shots that were already whole, pushing a
+    frozen-ish frame in where the motion was supposed to run on. The guard has
+    to key off the frame count and nothing else.
+    """
+    monkeypatch.setattr(render, "FPS", 30)
+    monkeypatch.setattr(render, "ZOOM_W", 640)
+    monkeypatch.setattr(render, "ZOOM_H", 360)
+    monkeypatch.setattr(render, "ZOOM_SS", 1)
+
+    mov = _moving_clip(tmp_path / "IMG_0005.MOV", seconds=2.4)
+    calls: list[list[str]] = []
+    real_run = render.run
+
+    def counting(cmd, **kw):
+        calls.append(cmd)
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr(render, "run", counting)
+    # A 2.4s clip trimmed into a 2.0s slot fills all of it: no push, one pass.
+    render.render_live(_entry(mov, 2.0), render.Pipeline(),
+                       tmp_path / "seg.mp4", sw=640, sh=360)
+    assert len(calls) == 1, (
+        f"a clip long enough for its slot needed {len(calls)} ffmpeg calls; "
+        "there is no gap to fill, so adding a push would only append one"
+    )
+    assert not list(tmp_path.glob("*_push.mp4")), (
+        "a push was written for a shot that did not need one"
+    )
+
+
+def test_the_push_supplies_exactly_the_frames_the_clip_could_not(tmp_path,
+                                                                  monkeypatch):
+    """The two parts must add up to the slot, not to approximately the slot.
+
+    Asking the clip for round(play*fps) frames and the push for round(tail*fps)
+    frames is not the same as asking for round(dur*fps). Both round down: a clip
+    of 1.0133s and a push of 1.0133s give 30 and 30 frames where a 2.0267s slot
+    wants 61. The concat's `-frames:v` is a ceiling, so the shot came out one
+    frame short and nothing complained - the same shape of fault as the
+    shortfall above, a fraction of a second that no duration comparison notices.
+
+    The invariant is checked on the frame counts themselves, because building a
+    clip whose length lands on a rounding boundary is not something a test can
+    ask ffmpeg for reliably.
+    """
+    monkeypatch.setattr(render, "FPS", 30)
+    monkeypatch.setattr(render, "ZOOM_W", 640)
+    monkeypatch.setattr(render, "ZOOM_H", 360)
+    monkeypatch.setattr(render, "ZOOM_SS", 1)
+
+    # The clip's length is pinned rather than measured, because the case that
+    # matters is a specific rounding boundary and asking ffmpeg for a clip of
+    # exactly 1.0133s is not something it promises. At 30fps these two halves are
+    # 30.4 frames each: the slot wants 61, and two rounds of 30.4 give 60.
+    clip_len = 1.0133
+    slot = 2.0267
+    monkeypatch.setattr(render, "_probe_motion", lambda _src: clip_len)
+    play, tail = render._live_split(slot, clip_len)
+    assert play == pytest.approx(clip_len, abs=1e-3)
+    assert tail == pytest.approx(clip_len, abs=1e-3)
+    assert round(slot * 30) - 2 * round(clip_len * 30) == 1, (
+        "this test needs the two halves to round down by exactly one frame "
+        f"between them; got {round(slot*30)} vs {2*round(clip_len*30)}"
+    )
+
+    mov = _moving_clip(tmp_path / "IMG_0006.MOV", seconds=1.0)
+    asked: list[int] = []
+    real_render_still = render.render_still
+
+    def recording(png, out, cfg, duration, motion, zoom=None):
+        asked.append(max(2, round(duration * 30)))
+        return real_render_still(png, out, cfg, duration, motion, zoom)
+
+    monkeypatch.setattr(render, "render_still", recording)
+    render.render_live(_entry(mov, slot), render.Pipeline(),
+                       tmp_path / "seg.mp4", sw=640, sh=360)
+
+    assert asked, "no push was rendered, so the two parts were never added up"
+    clip_frames = max(2, round(play * 30))
+    want = round(slot * 30)
+    assert clip_frames + asked[0] >= want, (
+        f"the clip supplies {clip_frames} frames and the push {asked[0]}, for a "
+        f"{want}-frame slot: {want - clip_frames - asked[0]} frames uncovered"
+    )

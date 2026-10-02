@@ -586,6 +586,12 @@ def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path, *,
     fit = fit_for(aspect, cfg) if aspect else cfg.render.fit
 
     play, tail = _live_split(dur, _probe_motion(src))
+    frames = max(2, int(round(dur * FPS)))
+    # Frames the clip can actually supply, not the ones its probed length implies.
+    # A MOV reports a duration that need not be a whole number of frames, and the
+    # two can differ enough to matter: rounded to whole frames, three clips in
+    # this cut promised 172 and delivered 171.
+    clip_frames = max(2, int(round(play * FPS)))
 
     def encode(frames_n: int, vf: str) -> list[str]:
         return [
@@ -604,7 +610,15 @@ def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path, *,
             *COLOR_TAGS,
         ]
 
-    if tail <= TAIL_MIN:
+    # The shortcut below is only valid when the clip genuinely fills its slot,
+    # and a leftover shorter than TAIL_MIN is not proof of that: the clip may
+    # simply be short. Measured over the trip cut, six shots took this branch
+    # while their clip could not fill the slot, and the encoder ran out of
+    # frames instead of frames running out of time - 12, 10, 10, 8, 1 and 1
+    # frames missing, 42 in all. The film's picture ended 0.58s early, and
+    # because audio is placed by the EDL's timings, those six shots also played
+    # up to 0.2s ahead of their own sound. So the test is the frame count.
+    if tail <= TAIL_MIN and clip_frames >= frames:
         # The clip fills its slot, so there is no held frame to rescue.
         run(encode(frames, _video_filter(width, height, fit, "", info))
             + [str(out_mp4)], timeout=900)
@@ -615,15 +629,21 @@ def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path, *,
     tail_png = out_mp4.with_name(f"{out_mp4.stem}_tail.png")
     try:
         # Part one: the clip, at its own pace, trimmed to the point it ends.
-        run(encode(max(2, int(round(play * FPS))),
-                   _video_filter(width, height, fit, "", info))
+        run(encode(clip_frames, _video_filter(width, height, fit, "", info))
             + [str(clip_mp4)], timeout=900)
 
         # Part two: a slow push on the frame the clip ended on. Taken from the
         # clip rather than from the still, so the push continues from exactly
         # where the motion left off instead of jumping back to the shutter.
+        #
+        # Its length is the frames the clip could not supply, not the leftover
+        # seconds. The two disagree by up to a frame - round(play*fps) plus
+        # round(tail*fps) is not always round((play+tail)*fps) - and deriving the
+        # push from the same count the clip was given makes the two parts add up
+        # to the slot exactly rather than approximately.
         _push_from_last_frame(src, fit, tail_png, sw or width, sh or height)
-        render_still(tail_png, push_mp4, cfg, tail, "in", TAIL_PUSH)
+        render_still(tail_png, push_mp4, cfg, (frames - clip_frames) / FPS,
+                     "in", TAIL_PUSH)
 
         run([
             "ffmpeg", "-y", "-v", "error",
