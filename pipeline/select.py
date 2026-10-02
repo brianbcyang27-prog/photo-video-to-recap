@@ -479,8 +479,13 @@ def assign_timing(entries: list[Entry], total_seconds: float,
         return
 
     spb = music.seconds_per_beat
-    frames_per_beat = max(1, int(round(spb * fps)))
-    total_beats = max(len(entries), int(round(total_seconds * fps / frames_per_beat)))
+    # How many beats the target holds. This has to be measured with the same
+    # per-beat length the cuts below are placed with - `seconds_per_beat`, not a
+    # whole number of frames. Rounding it first under-counts the beats by up to
+    # 1/(2*spb*fps), which at 126.05 BPM and 60fps is 1.57%: a 177s request
+    # came back 174.2s and the pipeline put that down to the library running
+    # dry. With 6972 photos in it.
+    total_beats = max(len(entries), int(round(total_seconds / spb)))
 
     title_idx = [i for i, e in enumerate(entries) if e.is_title]
     content_idx = [i for i, e in enumerate(entries) if not e.is_title]
@@ -534,6 +539,18 @@ def assign_timing(entries: list[Entry], total_seconds: float,
         frame = int(round(cum_beats * spb * fps))
         e.duration = (frame - prev_frame) / fps
         prev_frame = frame
+
+    # A whole number of beats cannot land on an arbitrary target - at 126.05 BPM
+    # the nearest whole count sits 4 frames past 177s - so the last shot takes up
+    # whatever is left. Its end is the end of the film rather than an edit, so
+    # trimming it moves no cut off the beat, and at half a beat it is not a
+    # visible change to a single shot out of 66. Bounded so that a library which
+    # genuinely cannot fill the target still reports the shortfall rather than
+    # one shot quietly absorbing the whole gap.
+    want_frame = int(round(total_seconds * fps))
+    slack = want_frame - prev_frame
+    if entries and abs(slack) <= 0.5 * spb * fps + 1:
+        entries[-1].duration += slack / fps
 
 
 def _is_portrait_photo(e: Entry) -> bool:
