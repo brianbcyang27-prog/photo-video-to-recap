@@ -12,6 +12,12 @@ out/
 # up tracked, so every render rewrote a file in the diff.
 *.log
 
+# Supplied music tracks and synthesised scores. Both are inputs or products of
+# a render rather than source: a track is the user's own licensed copy, and a
+# generated score is ~11MB of audio reproducible from --mood and --bpm.
+music/
+music_generated.wav
+
 # Synthetic test libraries: ~800MB of generated files. Regenerate with
 #   .venv/bin/python tools/make_test_media.py
 #   .venv/bin/python tools/make_audio_library.py

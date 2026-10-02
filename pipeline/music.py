@@ -130,6 +130,18 @@ def _onset_envelope(x: np.ndarray, sr: int,
     return (env / std).astype(np.float64) if std > 1e-9 else env
 
 
+def _tempo_prior(bpms):
+    """Log-normal prior over tempo, centred at 120 BPM, in log2 octaves.
+
+    One definition, used both to choose a tempo and to re-judge it. These used
+    to be two different objectives: the argmax scored candidates against this
+    prior while the octave check compared raw autocorrelation, so the check
+    could only ever pull the answer toward whatever the raw correlation liked
+    and silently undo the prior.
+    """
+    return np.exp(-0.5 * (np.log2(bpms / 120.0) / 0.9) ** 2)
+
+
 def _estimate_tempo(env: np.ndarray, sr: int, hop: int,
                     bpm_range: tuple[float, float] = (60.0, 185.0)) -> float:
     """Autocorrelate the onset envelope, with a log-normal prior at 120 BPM."""
@@ -150,24 +162,36 @@ def _estimate_tempo(env: np.ndarray, sr: int, hop: int,
     scores = ac[min_lag:max_lag].copy()
     bpms = 60.0 * fps / lags
     # Prefer tempi near 120, mildly.
-    prior = np.exp(-0.5 * (np.log2(bpms / 120.0) / 0.9) ** 2)
+    prior = _tempo_prior(bpms)
     scores *= prior
 
     best = lags[int(np.argmax(scores))]
     bpm = float(np.clip(60.0 * fps / best, *bpm_range))
 
-    # Octave check: is twice or half the tempo a better fit?
+    def _score_at(candidate: float) -> float:
+        """Prior-weighted autocorrelation near `candidate`'s period."""
+        lag = 60.0 * fps / candidate
+        lo, hi = int(max(1, lag - 1)), int(min(len(ac) - 1, lag + 1)) + 1
+        if hi <= lo:
+            return -1.0
+        return float(ac[lo:hi].max()) * float(_tempo_prior(candidate))
+
+    # Octave check: is twice or half the tempo a better fit? Scored with the
+    # prior, like the argmax above. Half-time house repeats every two beats, so
+    # its raw correlation genuinely peaks at the half-tempo lag while the
+    # prior-weighted argmax has already preferred the full tempo; judging the
+    # switch on raw correlation alone reversed that and reported 63 BPM for a
+    # 126 BPM track, which doubles every shot length and lands cuts between
+    # beats. The 6% margin is kept so a clear winner still moves.
+    current = _score_at(bpm)
     for factor in (0.5, 2.0):
         alt = bpm * factor
         if not (bpm_range[0] <= alt <= bpm_range[1]):
             continue
-        lag = 60.0 * fps / alt
-        lo, hi = int(max(1, lag - 1)), int(min(len(ac) - 1, lag + 1)) + 1
-        if hi <= lo:
-            continue
-        if float(ac[lo:hi].max()) > float(ac[best - 1:best + 2].max()) * 1.06:
+        alt_score = _score_at(alt)
+        if alt_score > current * 1.06:
             bpm = float(np.clip(alt, *bpm_range))
-            best = int(lag)
+            current = alt_score
     return bpm
 
 
