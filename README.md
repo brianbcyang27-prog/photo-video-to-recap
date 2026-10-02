@@ -89,9 +89,17 @@ The motion half is normally treated as a duplicate and thrown away, which is a
 waste: it is the only part that shows someone actually moving, and it carries
 the ambient sound of the room. So by default each Live Photo is played as what
 it is — real motion, and the sound that was recorded with it — and shown once,
-not as a still with a pan. Roughly 10 of 19 shots in a sample render moved
-genuinely and carried room tone; the rest played whole and held their last
-frame, so a 2s clip on a 3s beat slot does not leave a gap.
+not as a still with a pan.
+
+A Live Photo's clip is usually far shorter than the beat slot it has to fill.
+On a real trip library the clips ran 0.70s to 2.71s against a 2.80s slot, so
+most of a Live Photo shot used to be a still frame with nothing happening in
+it — measured on one shot, 0 of 54 frames moved after the clip ended, and on
+another, three quarters of the shot was frozen. The remainder is now a slow
+eased push on the frame the clip ended on, so the shot keeps drifting all the
+way to its cut. The clip still plays at its own pace and is never slowed down
+to fill the gap, which would turn a gesture into a smear. A shortfall under
+0.25s is left alone: it is a few frames, and it is not worth three encodes.
 
 `--no-live-photos` turns it off and puts them back to Ken Burns pans.
 
@@ -157,6 +165,20 @@ costs bitrate on pixels carrying no information. If your library is mostly video
 
 One output file has one resolution, so mixing them is not an option; that is a
 deliberate limit, not an oversight.
+
+There is a second reason 1080p often looks *better* than 4K here, which is
+counter-intuitive enough to be worth stating. Stills are animated by `zoompan`,
+which resamples its input with a nearest-neighbour kernel, so it is rendered
+larger than the delivery size and reduced afterwards — each output pixel then
+gets chosen from several source pixels instead of one. Measured on a real 12MP
+photo, mean edge energy is 5.252 at 1:1, 5.009 when rendered at 2x and reduced,
+and that softening at 1:1 "was the single largest cause of the picture looking
+low-resolution". The factor is capped at 2x because source resolution limits
+what more can recover, and 2x already covers 1080p (a 4032px photo against a
+1920px canvas) but not 4K: `4032 // 3840` is 1, so a 4K render drops the
+supersample and animates 1:1. 4K therefore gains pixels and gives up edge
+detail on exactly the shots that carry a film. If the picture looks soft rather
+than small, `--size 1080p` is the fix, and `--fps 60` is the better deal still.
 
 ### Portrait shots
 
@@ -251,7 +273,7 @@ This renders each case for real and verifies the file, so it takes a while.
 ## Tests
 
 ```bash
-./.venv/bin/python -m pytest tests -q      # 170 tests, about 1.9s
+./.venv/bin/python -m pytest tests -q      # 186 tests, about 2.8s
 ```
 
 No ffmpeg, no media on disk, no network — the suite is pure logic, so a failure
@@ -336,7 +358,7 @@ tools/
   verify_output.py        measures a rendered file against its plan
   sweep.sh                renders and verifies every option combination
   clean.sh                clears scratch space between runs
-tests/                 170 tests, no media required
+tests/                 186 tests, no media required
 ```
 
 ## Tuning
