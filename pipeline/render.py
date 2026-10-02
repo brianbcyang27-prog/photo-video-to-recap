@@ -538,7 +538,8 @@ def _video_filter(width: int, height: int, fit: str, extra: str = "",
     )
 
 
-def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
+def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path, *,
+                sw: int | None = None, sh: int | None = None) -> None:
     """Play a Live Photo's motion clip as this shot.
 
     The still and its clip are one picture in the Photos app, and rendering
@@ -552,46 +553,145 @@ def render_live(entry: Entry, cfg: Pipeline, out_mp4: Path) -> None:
       so the whole clip plays rather than a guessed cut.
     * Motion is kept at its own pace. Stretching 2s of footage across a 4s slot
       to fill the beat would slow a walk to a crawl and make the movement look
-      wrong; instead the clip plays once and the frame holds, which is exactly
-      what the Photos app does when you hold a Live Photo still.
-    * Ken Burns is skipped. The clip already moves, so panning on top of it
-      gives two competing motions and reads as a wobble.
+      wrong, so the clip plays once at its own speed.
+    * The tail keeps drifting rather than stopping. A Live Photo is usually much
+      shorter than the slot it has to fill - measured across this trip's library,
+      0.70s to 2.71s of motion against a 2.80s slot - so most of a Live Photo
+      shot used to be a cloned last frame: entry 18 held 1.92s of its 2.80s and
+      entry 40 held 2.10s, three quarters of the shot dead. Measured on entry
+      18's real clip: 0 of 54 tail frames moved. That is what a freeze-frame bug
+      looks like, and it was the largest single source of the "the motion feels
+      cheap" complaint. Holding is right in the Photos app because you are the
+      one holding it and you expect that; nobody asked for it in a cut film. So
+      the clip's last frame gets a slow eased Ken Burns push for the remainder,
+      which is the documentary idiom for settling on a moment.
+    * Ken Burns is not panned on top of the clip itself. The clip already moves,
+      so panning during playback gives two competing motions and reads as a
+      wobble. The push only begins once the clip has ended.
+
+    `sw`/`sh` are the supersampled canvas the stills are prepared at, needed so
+    the push samples the same pixels the rest of the stills do. Left optional
+    so a caller that does not have them still gets a correct push, just at
+    delivery resolution.
     """
     assert entry.item is not None
     src = entry.item.info.live_motion
     assert src is not None
     dur = max(0.08, entry.duration)
     width, height = ZOOM_W, ZOOM_H
-
-    clip = _probe_motion(src)
-    # Play what is there, then hold the last frame for whatever the beat needs.
-    play = max(0.3, min(dur, clip)) if clip else dur
     frames = max(2, int(round(dur * FPS)))
 
     info = entry.item.info
     aspect = (info.width / info.height) if (info.width and info.height) else 0.0
     fit = fit_for(aspect, cfg) if aspect else cfg.render.fit
 
-    cmd = [
-        "ffmpeg", "-y", "-v", "error",
-        "-i", str(src),
-        "-filter_complex",
-        _video_filter(width, height, fit,
-                      f"tpad=stop_mode=clone:stop_duration="
-                      f"{max(0.0, dur - play):.3f}", info),
-        "-map", "[v]",
-        "-frames:v", str(frames),
-        "-an",
-        "-c:v", "libx264", "-crf", str(cfg.render.crf),
-        "-preset", cfg.render.preset,
-        "-pix_fmt", "yuv420p", "-r", str(FPS),
-        "-profile:v", "high", "-level", _h264_level(),
-        "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
-        "-video_track_timescale", "90000",
-        *COLOR_TAGS,
-        str(out_mp4),
-    ]
-    run(cmd, timeout=900)
+    play, tail = _live_split(dur, _probe_motion(src))
+
+    def encode(frames_n: int, vf: str) -> list[str]:
+        return [
+            "ffmpeg", "-y", "-v", "error",
+            "-i", str(src),
+            "-filter_complex", vf,
+            "-map", "[v]",
+            "-frames:v", str(frames_n),
+            "-an",
+            "-c:v", "libx264", "-crf", str(cfg.render.crf),
+            "-preset", cfg.render.preset,
+            "-pix_fmt", "yuv420p", "-r", str(FPS),
+            "-profile:v", "high", "-level", _h264_level(),
+            "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
+            "-video_track_timescale", "90000",
+            *COLOR_TAGS,
+        ]
+
+    if tail <= TAIL_MIN:
+        # The clip fills its slot, so there is no held frame to rescue.
+        run(encode(frames, _video_filter(width, height, fit, "", info))
+            + [str(out_mp4)], timeout=900)
+        return
+
+    clip_mp4 = out_mp4.with_name(f"{out_mp4.stem}_clip.mp4")
+    push_mp4 = out_mp4.with_name(f"{out_mp4.stem}_push.mp4")
+    tail_png = out_mp4.with_name(f"{out_mp4.stem}_tail.png")
+    try:
+        # Part one: the clip, at its own pace, trimmed to the point it ends.
+        run(encode(max(2, int(round(play * FPS))),
+                   _video_filter(width, height, fit, "", info))
+            + [str(clip_mp4)], timeout=900)
+
+        # Part two: a slow push on the frame the clip ended on. Taken from the
+        # clip rather than from the still, so the push continues from exactly
+        # where the motion left off instead of jumping back to the shutter.
+        _push_from_last_frame(src, fit, tail_png, sw or width, sh or height)
+        render_still(tail_png, push_mp4, cfg, tail, "in", TAIL_PUSH)
+
+        run([
+            "ffmpeg", "-y", "-v", "error",
+            "-i", str(clip_mp4), "-i", str(push_mp4),
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]",
+            "-frames:v", str(frames),
+            "-an",
+            "-c:v", "libx264", "-crf", str(cfg.render.crf),
+            "-preset", cfg.render.preset,
+            "-pix_fmt", "yuv420p", "-r", str(FPS),
+            "-profile:v", "high", "-level", _h264_level(),
+            "-g", str(_gop()), "-keyint_min", str(_gop()), "-sc_threshold", "0",
+            "-video_track_timescale", "90000",
+            *COLOR_TAGS,
+            str(out_mp4),
+        ], timeout=900)
+    finally:
+        for tmp in (clip_mp4, push_mp4, tail_png):
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def _push_from_last_frame(src: Path, fit: str, out_png: Path,
+                          w: int, h: int) -> None:
+    """Write the final frame of a Live Photo clip as a prepared canvas PNG.
+
+    A tenth of a second back from the end rather than exactly at it: seeking to
+    the very last timestamp can land past the final frame on some decoders and
+    return nothing. Orientation is left alone because video frames are already
+    upright - the EXIF tag that matters for a HEIC has no meaning here.
+    """
+    from .quality import load_image
+    run(["ffmpeg", "-y", "-v", "error", "-sseof", "-0.1", "-i", str(src),
+         "-frames:v", "1", "-update", "1", str(out_png)], timeout=300)
+    img = load_image(out_png, max_long_side=0, orientation=1)
+    if img is None:
+        raise ToolError(f"could not read the last frame of {src.name}")
+    compose(img, w, h, fit).save(out_png)
+
+
+# How far the held tail of a Live Photo pushes in, and the shortest tail worth
+# rescuing. Small on purpose: this is a settle, not a second camera move, and it
+# has to read as the same shot continuing rather than as a cut into a new one.
+#
+# TAIL_MIN is where a hold stops being invisible. The shortfall has to be worth
+# two extra encodes and a concat, and a couple of dozen frames is not: 0.09s is
+# three frames at 30fps, which nobody sees, and it was being paid for on every
+# Live Photo whose clip ran slightly long. The real cases were 1.0s to 2.1s.
+# A quarter of a second is about seven frames - under that, a brief stillness
+# reads as a pause between beats rather than as a freeze.
+TAIL_PUSH = 0.055
+TAIL_MIN = 0.25
+
+
+def _live_split(dur: float, clip: float) -> tuple[float, float]:
+    """Split a Live Photo shot into (seconds of clip, seconds of push).
+
+    Separate from ``render_live`` so the decision is a comparison between two
+    numbers and can be tested without an encoder. The clip plays at its own
+    speed and is never stretched - only made up, by a push on its last frame.
+    """
+    if not clip or clip <= 0.0:
+        return dur, 0.0
+    play = max(0.3, min(dur, clip))
+    return play, max(0.0, dur - play)
 
 
 _MOTION_DURATION: dict[Path, float] = {}
@@ -1276,7 +1376,7 @@ def render(cut: CutList, cfg: Pipeline, music_path: Path | None,
             render_still(frame_for[idx], out, cfg, e.duration, e.motion, e.zoom)
         elif e.item.kind == "photo":
             if e.item.info.is_live:
-                render_live(e, cfg, out)
+                render_live(e, cfg, out, sw=sw, sh=sh)
             else:
                 render_still(frame_for[idx], out, cfg, e.duration, e.motion,
                              e.zoom)

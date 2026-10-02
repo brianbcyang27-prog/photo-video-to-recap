@@ -203,7 +203,12 @@ def test_encode_commands_actually_use_the_derived_level_and_gop():
 
     assert inspect.getsource(r.render_still).count("_h264_level()") == 1
     assert inspect.getsource(r.render_video).count("_h264_level()") == 1
-    assert inspect.getsource(r.render_live).count("_h264_level()") == 1
+    # render_live has two encodes now: the Live Photo's own clip, and the join
+    # that appends a Ken Burns push to its last frame so a short clip does not
+    # sit frozen for the rest of its slot. What matters is that both derive the
+    # level, which the file-wide scan above already enforces - so this only has
+    # to prove the helper is reached at all.
+    assert inspect.getsource(r.render_live).count("_h264_level()") >= 1
 
 
 def test_video_filter_extra_goes_inside_the_graph():

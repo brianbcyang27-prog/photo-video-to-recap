@@ -811,6 +811,16 @@ def main() -> int:
         dur = e["duration"]
         if dur < 2.0:
             continue
+        # A shot with no camera travel has no displacement profile to judge, so
+        # it cannot ease. Skipping it is not a loophole - it is the only correct
+        # answer, and the old frame-difference test for "is it static" could not
+        # see it: a held shot still has large frame-to-frame differences coming
+        # out of the crossfade on either side, so it was scored as a failed ease
+        # every time. Measured on the trip library: 2 of the first 10 stills are
+        # `motion: still, zoom: 0.0` and both were reported as failures. The
+        # EDL says so directly, so ask it.
+        if e.get("zoom") is not None and not e.get("zoom"):
+            continue
         frames = [grab_small(video, e["start"] + dur * f).astype(np.float32)
                   for f in (0.04, 0.29, 0.54, 0.79, 0.96)]
         if any(f.shape != frames[0].shape for f in frames):
