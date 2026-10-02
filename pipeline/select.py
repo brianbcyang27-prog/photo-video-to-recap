@@ -894,10 +894,15 @@ def build_cutlist(items: list[Item], ctx: TripContext, cfg: Pipeline,
         msg = (f"final length {cut.duration:.1f}s vs target {target:.1f}s")
         if drift < 0:
             n_content = len([e for e in entries if not e.is_title])
-            msg += (f" - there are not enough distinct shots in the library to "
-                    f"fill {target:.0f}s at a watchable pace "
-                    f"({n_content} shots available). Add more media, or ask "
-                    f"for roughly {cut.duration:.0f}s.")
+            # States the shortfall and the count, not a cause. This used to say
+            # there were "not enough distinct shots in the library" - and when
+            # the beat count came out 1.57% low, which it did for any target
+            # whose beat was not a whole number of frames, it said that with
+            # 6972 photos in the library and reported a film 2.8s short as a
+            # selection problem. The count is here so the reader can tell a thin
+            # library from an arithmetic one.
+            msg += (f" - {n_content} shots available; ask for roughly "
+                    f"{cut.duration:.0f}s, or add more media")
         cut.notes.append(msg)
         log(msg, level="warn")
     log(f"timeline: {len(entries)} entries, {cut.duration:.1f}s "

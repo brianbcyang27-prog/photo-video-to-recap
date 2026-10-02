@@ -347,6 +347,24 @@ def log_note(msg: str) -> None:
     print(f"  note: {msg}")
 
 
+def length_check(edl: dict, planned: float) -> tuple[bool, str]:
+    """Does the planned length match the length that was asked for?
+
+    Split out from main() so it can be tested without a rendered file. The
+    tolerance is one beat, because the pipeline allocates whole beats and a
+    target that is not a whole number of beats cannot be hit exactly.
+    """
+    target = float(edl.get("target") or 0.0)
+    bpm = float((edl.get("music") or {}).get("bpm") or 0.0)
+    beat = 60.0 / bpm if bpm > 1.0 else 0.5
+    if target <= 0.0:
+        return True, "no target recorded, so no length to check against"
+    gap = abs(planned - target)
+    return (gap <= beat + 1e-6,
+            f"plan runs {planned:.2f}s against the {target:.2f}s requested "
+            f"({gap:.2f}s out; one beat is {beat:.3f}s)")
+
+
 def _count_frames(path: Path) -> int | None:
     """Exact decoded frame count, or None if ffprobe cannot say.
 
@@ -456,14 +474,20 @@ def main() -> int:
     # plan and passed, while the video stream was 599.26s, 35 frames short, with
     # every shot after the first shortfall landing up to 0.58s ahead of its own
     # sound.
-    if abs(planned - edl["target"]) > 1.5:
-        check(True,
-              f"NOTE: plan is {planned:.0f}s but {edl['target']:.0f}s was "
-              f"requested - the library could not fill it, and the pipeline "
-              f"reported this")
-    else:
-        check(abs(total - edl["target"]) <= 1.5,
-              f"duration {total:.1f}s vs target {edl['target']:.0f}s")
+    #
+    # The plan is also checked against the *requested* target, and that used to
+    # be a branch that could not fail: any plan more than 1.5s from the target
+    # reported "the library could not fill it" and passed unconditionally. It is
+    # how a 177s request producing a 174.2s plan came back 27/27 - and the note
+    # named the library as the cause when the cause was a 1.57% arithmetic error,
+    # with 6972 photos sitting unused. A NOTE that always passes is worse than no
+    # check at all, because it reads like a result.
+    #
+    # One beat of slack, because durations are allocated in whole beats and the
+    # plan therefore cannot land closer than that to an arbitrary target. This is
+    # the same bound assign_timing() uses when it trims the last shot.
+    ok, msg = length_check(edl, planned)
+    check(ok, msg)
 
     # ---- container sanity
     probe = subprocess.run(

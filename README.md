@@ -275,7 +275,7 @@ This renders each case for real and verifies the file, so it takes a while.
 ## Tests
 
 ```bash
-./.venv/bin/python -m pytest tests -q      # 238 tests, about 6.3s
+./.venv/bin/python -m pytest tests -q      # 252 tests, about 6.5s
 ```
 
 No ffmpeg, no media on disk, no network — the suite is pure logic, so a failure
@@ -360,7 +360,7 @@ tools/
   verify_output.py        measures a rendered file against its plan
   sweep.sh                renders and verifies every option combination
   clean.sh                clears scratch space between runs
-tests/                 238 tests, no media required
+tests/                 252 tests, no media required
 ```
 
 ## Tuning
