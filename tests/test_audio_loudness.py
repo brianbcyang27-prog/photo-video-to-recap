@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import math
 import re
 import subprocess
 import wave
@@ -335,8 +336,59 @@ def test_ducking_has_a_real_knee(tmp_path, monkeypatch):
 
 def test_ducking_ratio_and_attack_are_unchanged_by_the_knee_fix(tmp_path, monkeypatch):
     """The knee is additive. Silently retuning ratio or attack would be a change
-    nobody asked for, and it would move duck depth for every existing render."""
+    nobody asked for, and it would move duck depth for every existing render.
+
+    The threshold is no longer asserted here, because it is now measured per
+    render from the content's own peak rather than being a constant. It was
+    0.035 (-29.1 dBFS) and that was wrong: on a library whose clips peak at
+    -20.9 dBFS the sidechain never engaged at all, and the music sat only
+    1.4 dB under the clips instead of ducking. See
+    test_duck_threshold_triggers_below_the_content_peak.
+    """
     opts = _duck_opts(_duck_filter(tmp_path, monkeypatch))
     assert float(opts["ratio"]) == 6.0
     assert float(opts["attack"]) == 18.0
-    assert float(opts["threshold"]) == pytest.approx(0.035)
+
+
+def test_duck_threshold_triggers_below_the_content_peak():
+    """The regression, as a comparison between two numbers.
+
+    The old constant sat *above* the material it was meant to react to, which
+    is a statement about two dB values rather than about ffmpeg, so it is
+    tested without an encoder.
+    """
+    quiet_peak = -20.9          # measured on test_media_audio
+    trigger = render._duck_threshold_db(quiet_peak)
+    assert trigger < quiet_peak, (
+        f"trigger {trigger:.1f} dBFS is not below the content peak "
+        f"{quiet_peak:.1f} dBFS, so the compressor can never engage"
+    )
+    # Far enough below to be reached by speech rather than by a click.
+    assert quiet_peak - trigger >= 12.0
+
+
+def test_duck_threshold_tracks_the_content_rather_than_fixing_one_number():
+    """A quiet library and a loud one must both get a working trigger."""
+    quiet = render._duck_threshold_db(-21.0)
+    loud = render._duck_threshold_db(-3.0)
+    assert quiet < loud, "a louder clip must trigger at a higher level"
+    assert loud - quiet == pytest.approx(18.0, abs=0.01)
+    # Both are usable numbers, not degenerate ones.
+    assert -60.0 <= quiet <= -12.0
+    assert -60.0 <= loud <= 0.0
+
+
+def test_duck_threshold_survives_a_silent_or_unmeasurable_library():
+    """No crash, and still a threshold a compressor will respond to."""
+    for peak in (None, -90.0, -120.0):
+        t = render._duck_threshold_db(peak)
+        assert t <= -20.0, f"peak={peak} produced a trigger of {t} dBFS"
+        assert math.isfinite(t)
+
+
+def test_duck_threshold_linear_value_never_reaches_zero():
+    """A zero threshold would make the compressor key on numerical noise."""
+    for peak in (-3.0, -21.0, -45.0, -120.0, None):
+        lin = max(render.DUCK_THRESHOLD_FLOOR,
+                  10.0 ** (render._duck_threshold_db(peak) / 20.0))
+        assert lin >= render.DUCK_THRESHOLD_FLOOR > 0.0

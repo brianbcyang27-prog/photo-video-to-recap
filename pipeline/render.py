@@ -751,6 +751,21 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
          "-i", str(list_file), "-c:a", "pcm_s16le", str(content_wav)])
 
+    # The ducking threshold has to be relative to the content it is ducking
+    # under, not a constant. It used to be a hardcoded 0.035 (-29.1 dBFS),
+    # which is a bet that the source audio is louder than -29 dBFS - and that
+    # bet is wrong often enough to matter. Measured on a quiet library whose
+    # clips peak at -20.9 dBFS, the compressor never engaged at all: the
+    # verifier reported the music bed only 1.4 dB below the clips' own audio,
+    # which is not ducking.
+    #
+    # A real phone library spans far more than that - clips of a quiet room and
+    # clips of a concert are 20 dB apart - so a single constant cannot be
+    # right for both. Measuring the assembled content and setting the trigger
+    # relative to it makes the ratio mean the same thing whatever the source
+    # was recorded at, which is the only way a fixed 6:1 is meaningful.
+    duck_threshold = _duck_threshold_for(content_wav)
+
     # sidechaincompress holds frames internally to compute its release ramp, so
     # it emits slightly less than it is given - measured at ~0.19s short of
     # 120s here. That shortfall used to reach the mux, where -shortest settled
@@ -804,7 +819,8 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
         # of this kind and turns the step back into a ramp.
         mix = (
             f"{music_filter};[0:a]{content_fmt};"
-            f"[mus][cont]sidechaincompress=threshold=0.035:ratio=6:knee=6:"
+            f"[mus][cont]sidechaincompress=threshold={duck_threshold:.6f}:"
+            f"ratio=6:knee=6:"
             f"attack=18:release={release_ms}:makeup=1[ducked];"
             # sidechaincompress has no ceiling of its own, so a loud mix (a
             # driving 'energetic' score under already-hot source audio) can land
@@ -837,6 +853,58 @@ def build_audio_track(entries: list[Path], cfg: Pipeline, music_path: Path,
     final_wav = _normalise_programme(mixed_wav, cfg)
     _assert_music_underneath(final_wav, music_path, total)
     return final_wav
+
+
+# Ducking is triggered relative to the content's own peak. Measured in dB, not
+# linear, because everything a listener hears about level is on a log scale.
+#
+#   DUCK_BELOW_PEAK_DB   how far under the content's peak the trigger sits. A
+#                        small number means the compressor is already working on
+#                        the loudest passages; a large one means it waits for
+#                        something close to the peak before reacting. 18 dB was
+#                        chosen as roughly "the part of the clip a listener
+#                        would call speech" rather than its quietest room tone.
+#   DUCK_THRESHOLD_FLOOR the linear floor, so a silent library cannot drive the
+#                        trigger to zero and make the compressor engage on
+#                        numerical noise. -45 dBFS.
+DUCK_BELOW_PEAK_DB = 18.0
+DUCK_THRESHOLD_FLOOR = 0.0056      # -45 dBFS
+
+
+def _duck_threshold_db(peak_db: float | None) -> float:
+    """The trigger level, in dBFS, for content peaking at `peak_db`.
+
+    Split out from the ffmpeg call so the arithmetic can be tested directly:
+    the bug this replaces was a threshold that sat *above* the material it was
+    supposed to react to, and that is a comparison between two numbers, so it
+    should not need an encoder to test.
+    """
+    if peak_db is None or peak_db < -60.0:
+        # Nothing measurable. Fall back to a threshold low enough to trigger on
+        # ordinary speech-level material rather than one tuned to silence.
+        return -40.0
+    return max(peak_db - DUCK_BELOW_PEAK_DB, -60.0)
+
+
+def _duck_threshold_for(content_wav: Path) -> float:
+    """Measure the assembled content bus and derive the ducking trigger.
+
+    Peaks the *content* bus rather than individual clips: after concat the bus
+    is what the compressor actually sees as its sidechain key, and it is
+    normalised to a common level by the concat, so one measurement describes
+    the whole programme.
+    """
+    proc = run(["ffmpeg", "-nostats", "-hide_banner", "-i", str(content_wav),
+                "-af", "volumedetect", "-f", "null", "-"], check=False)
+    peak_db = None
+    for line in (proc.stderr or "").splitlines():
+        if "max_volume:" in line:
+            try:
+                peak_db = float(line.split("max_volume:")[1].split("dB")[0])
+            except (IndexError, ValueError):
+                pass
+    threshold_db = _duck_threshold_db(peak_db)
+    return max(DUCK_THRESHOLD_FLOOR, 10.0 ** (threshold_db / 20.0))
 
 
 def _measure_loudness(path: Path) -> dict[str, float] | None:
